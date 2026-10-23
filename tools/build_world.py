@@ -46,7 +46,7 @@ for (c, rw), (bio, fr) in sorted(cells.items(), key=lambda kv: (kv[0][1], kv[0][
     if lab[rw, c] == keep:
         out.append({'c': c, 'r': rw, 'b': bio, 'l': round(fr, 2)})
 json.dump({'n': N, 'cells': out}, open('assets/world.json', 'w'), separators=(',', ':'))
-im.resize((900, 900), Image.LANCZOS).save('assets/worldmap.jpg', quality=82)
+im.save('assets/worldmap.jpg', quality=80, optimize=True)      # resolução cheia (1254): o mapa agora tem zoom
 print(len(out), 'quadrados de terra (de', len(cells), 'com terra)')
 sym = {'ice': 'I', 'toxic': 'g', 'volcanic': 'V', 'desert': 'd'}
 grid = {(o['c'], o['r']): sym[o['b']] for o in out}

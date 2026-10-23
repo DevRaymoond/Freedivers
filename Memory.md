@@ -6,3 +6,5 @@
 - Entrega: Blender editável e GLB com rig de 20 ossos e ações `Idle`, `Walk`, `Spit`; integrar no inimigo cuspideiro, com evento de animação alinhado ao disparo.
 - Fonte original e texturas ficam em `tools/source/spider/` (ignorado pelo Git); o gerador permite recriar os assets.
 
+- 2026-10-23: usuário adicionou corredor, empurrador e titã (zips do Tripo em Downloads, extraídos em `tools/source/mA|mB|mC`) e pediu validação de pernas, igualdade, cor e tamanho; resultado em `tools/validar_modelos.md`. Titã ácido ganhou rig e animações (andar lento, pisada, jato de ácido estilo Bile Titan) e entrou no jogo para os insetos (nível 6+). Corredor e empurrador seguem só validados.
+- 2026-10-23: mapa do modo online/Novo jogo deve ser grande, com zoom e painel lateral pequeno e simples.

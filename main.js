@@ -54,6 +54,8 @@ const ENEMY_TYPES = {
   bomber:  { hp: 40, speed: 5.4, dmg: 35, radius: 0.9, height: 0.9, scale: 1, color: 0xb8651f },
   charger: { hp: 150, speed: 4.2, dmg: 32, radius: 1.3, height: 1.1, scale: 1.5, color: 0x56697a },
   queen:   { hp: 1800, speed: 2.7, dmg: 38, radius: 3.4, height: 3.0, scale: 4.4, color: 0x6a2b6f },
+  // Titã ácido: gigante lento; pisa (área) e cospe um jato de ácido (inspirado no Bile Titan). Esfera de acerto no meio do corpo (as pernas são longas).
+  titan:   { hp: 2200, speed: 1.7, dmg: 42, radius: 4.2, height: 4.4, scale: 9, color: 0xb59a62 },
 };
 
 const MISSIONS = [
@@ -115,7 +117,8 @@ function effective(def, L) {
   };
 }
 const missionLevel = id => Math.min(LEVEL_MAX, Math.max(1, (save.levels && save.levels[id]) || 1));
-const XP_VALUES = { crawler: 6, spitter: 10, bomber: 12, charger: 26, brute: 60, queen: 400 };
+const XP_VALUES = { crawler: 6, spitter: 10, bomber: 12, charger: 26, brute: 60, queen: 400, titan: 220 };
+const TITAN_MIN_LEVEL = 6;                 // o Titã só aparece a partir deste nível de ameaça
 
 // ───────────────────────── Cena ─────────────────────────
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -397,8 +400,8 @@ let pendingHits = [];              // cliente: tiros que acertaram, enviados ao 
 let waypointHide = 0;              // some a seta quando você já está a menos de X m do ponto (zona de extração)
 let snapT = 0, stateT = 0, partyT = 0;
 const NOKEYS = {};
-const TYPE_LIST = ['crawler', 'spitter', 'brute', 'bomber', 'charger', 'queen'];
-const ST_CODE = { walk: 0, wind: 1, charge: 2, stun: 3 }, ST_NAME = ['walk', 'wind', 'charge', 'stun'];
+const TYPE_LIST = ['crawler', 'spitter', 'brute', 'bomber', 'charger', 'queen', 'titan'];
+const ST_CODE = { walk: 0, wind: 1, charge: 2, stun: 3, stomp: 4, jet: 5 }, ST_NAME = ['walk', 'wind', 'charge', 'stun', 'stomp', 'jet'];
 const PLANE_ST = ['inbound', 'landed', 'opening', 'open', 'closing', 'takeoff'];
 let pad = null;
 let kills = 0;
@@ -540,7 +543,41 @@ function animateSpider(enemy, dt, moving) {
   setSpiderAction(spider, spider.spitT > 0 ? 'Spit' : moving ? 'Walk' : 'Idle');
   spider.mixer.update(dt);
 }
+let titanAsset = null, titanLoadPromise = null;
+function loadTitan() {
+  if (titanAsset) return Promise.resolve(titanAsset);
+  if (!titanLoadPromise) titanLoadPromise = new GLTFLoader().loadAsync('./assets/titan.glb')
+    .then(gltf => (titanAsset = gltf))
+    .catch(err => { console.warn('Titã indisponível:', err); titanLoadPromise = null; return null; });
+  return titanLoadPromise;
+}
+function makeTitanMesh() {
+  const g = new THREE.Group(), model = cloneSkeleton(titanAsset.scene);
+  model.rotation.y = Math.PI;                                    // o modelo olha para +Z; os inimigos avançam por -Z
+  model.traverse(o => { if (o.isMesh) { o.material = o.material.clone(); o.castShadow = true; o.frustumCulled = false; } });
+  g.add(model);
+  const mixer = new THREE.AnimationMixer(model), actions = {};
+  for (const clip of titanAsset.animations) actions[clip.name] = mixer.clipAction(clip);
+  actions.Idle.play();
+  g.scale.setScalar(ENEMY_TYPES.titan.scale);
+  g.userData.titan = { mixer, actions, active: 'Idle' };
+  return g;
+}
+function setTitanAction(T, name) {
+  if (T.active === name) return;
+  const next = T.actions[name], prev = T.actions[T.active]; if (!next) return;
+  const once = name === 'Stomp' || name === 'Jet';
+  next.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat, once ? 1 : Infinity); next.clampWhenFinished = once;
+  next.reset().fadeIn(once ? 0.18 : 0.35).play(); if (prev) prev.fadeOut(once ? 0.18 : 0.35);
+  T.active = name;
+}
+function animateTitan(e, dt, moving) {
+  const T = e.mesh.userData.titan; if (!T) return;
+  setTitanAction(T, e.st === 'stomp' ? 'Stomp' : e.st === 'jet' ? 'Jet' : moving ? 'Walk' : 'Idle');
+  T.mixer.update(dt * (T.active === 'Walk' ? 0.9 : 1));
+}
 function makeEnemyMesh(type, fac = curFaction) {
+  if (type === 'titan' && titanAsset) return makeTitanMesh();
   if (fac === 'bots' && botsReady()) return makeBotMesh(type);
   const t = ENEMY_TYPES[type];
   if (type === 'spitter' && fac !== 'bots' && spiderAsset) return makeSpiderMesh();
@@ -609,7 +646,7 @@ function makeEnemyMesh(type, fac = curFaction) {
 }
 
 function spawnEnemy(type, atPos, opts = {}) {
-  const fac = opts.fac || pickFac();
+  const fac = type === 'titan' ? 'bugs' : (opts.fac || pickFac());
   const t = (fac === 'bots' ? BOT_TYPES : ENEMY_TYPES)[type];
   const mesh = makeEnemyMesh(type, fac);
   let p = atPos;
@@ -623,7 +660,7 @@ function spawnEnemy(type, atPos, opts = {}) {
   }
   mesh.position.copy(p);
   let hp = t.hp * (relax ? 0.8 : 1) * mods.hp * party.hp * (opts.hpMul || 1);
-  const elite = type !== 'queen' && type !== 'brute' && Math.random() < mods.elite;
+  const elite = type !== 'queen' && type !== 'brute' && type !== 'titan' && Math.random() < mods.elite;
   if (elite) {
     hp *= 2.4; mesh.scale.multiplyScalar(1.25);
     mesh.traverse(o => { if (o.isMesh && o.material.emissive) o.material.emissive.set(0x7a3a00); });
@@ -631,7 +668,7 @@ function spawnEnemy(type, atPos, opts = {}) {
   scene.add(mesh);
   const e = {
     id: uid(), by: -1, dm: (opts.dmMul || 1) * party.dmg, type, fac, t, mesh, hp, maxHp: hp, atkCd: rand(0, 0.5), shootCd: rand(1, 2.5), phase: Math.random() * 6,
-    st: 'walk', stT: rand(1.5, 3), volleyCd: 3, summonCd: 10, spd: mods.speed, elite, bias: Math.random() < 0.5 ? 1 : -1,
+    st: 'walk', stT: rand(1.5, 3), volleyCd: 3, summonCd: 10, stompCd: rand(2, 4), jetCd: rand(4, 8), hitDone: false, jetAcc: 0, spd: mods.speed, elite, bias: Math.random() < 0.5 ? 1 : -1,
     pl: opts.pl || null, wave: opts.wave || 0, alert: !!opts.alert, slot: opts.slot || 0,
   };
   enemies.push(e);
@@ -758,6 +795,7 @@ function addDrop(id, type, x, z) {
   drops.push({ id, m, type, t: 22 });
 }
 function removeDrop(d) { scene.remove(d.m); const i = drops.indexOf(d); if (i >= 0) drops.splice(i, 1); }
+function maybeDropForce(pos) { const type = Math.random() < 0.5 ? 'hp' : 'ammo', id = uid(); addDrop(id, type, pos.x, pos.z); net.all({ k: 'drop', id, type, x: pos.x, z: pos.z }); }
 function maybeDrop(pos) {
   if (Math.random() > 0.14) return;
   const type = Math.random() < 0.5 ? 'hp' : 'ammo', id = uid();
@@ -773,7 +811,9 @@ function killEnemy(e) {
   enemies.splice(enemies.indexOf(e), 1);
   if (e.by !== -2) { kills++; killsBy[e.by] = (killsBy[e.by] || 0) + 1; $('kills').textContent = 'Abates: ' + kills; }
   if (e.type === 'bomber') explode(e.mesh.position, 5.5, 35 * e.dm * mods.edmg, 70);
+  else if (e.type === 'titan') { for (let k = 0; k < 4; k++) maybeDropForce(e.mesh.position.clone().add(new THREE.Vector3(rand(-4, 4), 0, rand(-4, 4)))); }
   else maybeDrop(e.mesh.position);
+  if (e.type === 'titan') { mission.boss = null; sayAll('Titã ácido abatido!', 3); shake = Math.max(shake, 0.6); }
   if (e.by !== -2) addXp((XP_VALUES[e.type] || 5) * (e.elite ? 2 : 1));
   mission.onKill?.(e);
 }
@@ -1112,6 +1152,10 @@ function spawnWave(op, n) {
     makePlatoon(c, waveTypes(n, Math.round(total / 3)), { alert: true, wave: n, hpMul, dmMul });
   }
   const brutes = n === 8 ? 2 : (n === 5 || n === 7) ? 1 : 0;
+  if (titanAsset && (mission.level || 1) >= TITAN_MIN_LEVEL && (n === 6 || n === 8) && !(curFaction === 'bots' && !mixFac)) {
+    const ang = rand(0, Math.PI * 2); spawnEnemy('titan', clampArena(new THREE.Vector3(generator.x + Math.cos(ang) * 66, 0, generator.z + Math.sin(ang) * 66)), { wave: n, alert: true, hpMul: 1 + 0.06 * ((mission.level || 1) - TITAN_MIN_LEVEL) });
+    sayAll('Um Titã ácido entrou na batalha!', 3.5);
+  }
   for (let k = 0; k < brutes; k++) {
     const ang = rand(0, Math.PI * 2);
     spawnEnemy('brute', clampArena(new THREE.Vector3(generator.x + Math.cos(ang) * 64, 0, generator.z + Math.sin(ang) * 64)), { wave: n, alert: true, hpMul, dmMul });
@@ -1457,9 +1501,21 @@ function buildMission(id) {
   return m;
 }
 
+let titanTimer = 60;
+function maybeTitan(dt) {                                   // nível 6+: um Titã por vez, de tempos em tempos (e nunca nas ondas já cobertas pela missão)
+  if (!titanAsset || (mission.level || 1) < TITAN_MIN_LEVEL || (mixFac ? false : curFaction === 'bots')) return;
+  titanTimer -= dt; if (titanTimer > 0) return;
+  titanTimer = rand(80, 120);
+  if (enemies.some(e => e.type === 'titan')) return;
+  const lp = livePlayers(), base = lp.length ? pick(lp).pos : player.pos, a = Math.random() * Math.PI * 2;
+  const p = clampArena(new THREE.Vector3(base.x + Math.cos(a) * 70, 0, base.z + Math.sin(a) * 70));
+  const e = spawnEnemy('titan', p, { alert: true, hpMul: 1 + 0.06 * ((mission.level || 1) - TITAN_MIN_LEVEL) });
+  sayAll('Um Titã ácido se aproxima! Cuidado com a pisada e com o jato.', 4); beep(90, 0.8, 0.15);
+}
 function spawnLogic(dt) {
+  if (mission.id !== 'operation' && mission.id !== 'queen') maybeTitan(dt);
   spawnTimer -= dt;
-  const small = enemies.filter(e => e.type !== 'brute' && e.type !== 'queen').length;
+  const small = enemies.filter(e => e.type !== 'brute' && e.type !== 'queen' && e.type !== 'titan').length;
   if (spawnTimer <= 0 && small < mission.cap) {
     spawnTimer = mission.interval;
     // Mission 1 limita o total de inimigos que ainda podem nascer
@@ -1496,7 +1552,7 @@ let campaignCell = null, campaignRemote = false, curBiome = 'desert', startBase 
 const lateSent = new Set();
 async function startMission(id, levelArg, opts = {}) {
   if (net.role === 'client') return;
-  if ((opts.faction || selFaction) !== 'bots' || opts.mix) await loadSpider();
+  if ((opts.faction || selFaction) !== 'bots' || opts.mix) { await loadSpider(); if (Math.round(levelArg || 1) >= TITAN_MIN_LEVEL) await loadTitan(); }
   const mi = MISSIONS.findIndex(m => m.id === id);
   if (!opts.cell && !missionUnlocked(mi)) { say('Fase bloqueada: vença a anterior em nível 3 ou mais.', 3); return; }
   ensureAudio();
@@ -1671,27 +1727,92 @@ function campaignResult(k, win, level, party) {
   saveLocalCampaign();
 }
 let campParty = 1;
+// ───────── mapa com zoom: roda do mouse / pinça / botões; arrastar move; toque seleciona ─────────
+const MAPU = 1000;                                              // o mapa tem 1000 unidades de lado; a escala em tela vem de view.k
+const KMAX = 8;
+function mapMetrics(W, cv) {
+  const r = cv.getBoundingClientRect(), v = W.view || (W.view = { k: 1, x: 0, y: 0, fit: true });
+  const base = Math.min(r.width, r.height) / MAPU, s = base * v.k, mw = MAPU * s;
+  if (v.fit) { v.x = (r.width - MAPU * base) / 2; v.y = (r.height - MAPU * base) / 2; v.fit = false; }
+  v.x = mw <= r.width ? (r.width - mw) / 2 : Math.min(0, Math.max(r.width - mw, v.x));      // não deixa o mapa sair da tela
+  v.y = mw <= r.height ? (r.height - mw) / 2 : Math.min(0, Math.max(r.height - mw, v.y));
+  return { r, v, base, s };
+}
+function zoomAt(W, cv, px, py, factor) {
+  const { v, base } = mapMetrics(W, cv), k2 = Math.min(KMAX, Math.max(1, v.k * factor));
+  const wx = (px - v.x) / (base * v.k), wy = (py - v.y) / (base * v.k);        // ponto do mundo sob o cursor continua sob o cursor
+  v.k = k2; v.x = px - wx * base * k2; v.y = py - wy * base * k2;
+  drawCampaign(W);
+}
 function drawCampaign(W) {
   const cv = $(W.id + 'Cv'); if (!cv || !worldReady(W)) return;
-  const ctx = cv.getContext('2d'), S = cv.width, cs = S / GEO.n;
-  ctx.clearRect(0, 0, S, S);
-  if (GEO.img && GEO.img.complete) ctx.drawImage(GEO.img, 0, 0, S, S);
-  const canAttack = net.role !== 'client';
+  const { r, v, s } = mapMetrics(W, cv), dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const cw = Math.max(1, Math.round(r.width * dpr)), ch = Math.max(1, Math.round(r.height * dpr));
+  if (cv.width !== cw || cv.height !== ch) { cv.width = cw; cv.height = ch; }
+  const ctx = cv.getContext('2d'), cs = MAPU / GEO.n, px = n => n / s;           // px(n) = n pixels de tela, em unidades do mapa
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#06101c'; ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.setTransform(dpr * s, 0, 0, dpr * s, dpr * v.x, dpr * v.y);
+  if (GEO.img && GEO.img.complete) ctx.drawImage(GEO.img, 0, 0, MAPU, MAPU);
+  const canAttack = net.role !== 'client', big = cs * s >= 58, huge = cs * s >= 96;
   for (const o of GEO.cells) {
-    const s = W.sec.get(ckey(o)), f = WL.dominant(s), x = o.c * cs, y = o.r * cs, top = Math.max(s.h, s.i, s.r) / 100;
+    const sc = W.sec.get(ckey(o)), f = WL.dominant(sc), x = o.c * cs, y = o.r * cs, top = Math.max(sc.h, sc.i, sc.r) / 100;
+    if (x * s + v.x > r.width || y * s + v.y > r.height || (x + cs) * s + v.x < 0 || (y + cs) * s + v.y < 0) continue;      // fora da tela
     ctx.fillStyle = OWN[f].color + Math.round(34 + top * 0.5).toString(16).padStart(2, '0'); ctx.fillRect(x, y, cs, cs);
-    ctx.strokeStyle = OWN[f].color + '88'; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, cs - 1, cs - 1);
-    if (s.h < WL.SCALE && (s.h > 0 || s.i < WL.SCALE && s.r < WL.SCALE)) {          // barra de domínio do quadrado (humanos | insetos | robôs)
-      let bx = x + 2; const bw = cs - 4, by = y + cs - 6;
-      for (const [v, c] of [[s.h, OWN.H.color], [s.i, OWN.I.color], [s.r, OWN.R.color]]) { if (!v) continue; ctx.fillStyle = c; ctx.fillRect(bx, by, bw * v / WL.SCALE, 4); bx += bw * v / WL.SCALE; }
+    ctx.strokeStyle = OWN[f].color + '88'; ctx.lineWidth = px(1); ctx.strokeRect(x, y, cs, cs);
+    if (sc.h < WL.SCALE && (sc.h > 0 || sc.i < WL.SCALE && sc.r < WL.SCALE)) {      // barra de domínio do quadrado (humanos | insetos | robôs)
+      let bx = x + px(2); const bw = cs - px(4), bh = px(huge ? 7 : 4), by = y + cs - bh - px(2);
+      for (const [val, c] of [[sc.h, OWN.H.color], [sc.i, OWN.I.color], [sc.r, OWN.R.color]]) { if (!val) continue; ctx.fillStyle = c; ctx.fillRect(bx, by, bw * val / WL.SCALE, bh); bx += bw * val / WL.SCALE; }
     }
-    if (canAttack && attackable(W, o)) { ctx.strokeStyle = '#ffe14a'; ctx.lineWidth = 2; ctx.strokeRect(x + 3, y + 3, cs - 6, cs - 6); }
-    if (s.h > 0 && s.h < WL.HUMAN_MIN) {                              // % de liberação escrita na célula
-      ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; const tx = `${s.h < 1000 ? (s.h / 100).toFixed(1) : Math.round(s.h / 100)}%`;
-      ctx.lineWidth = 3; ctx.strokeStyle = '#000c'; ctx.strokeText(tx, x + cs / 2, y + cs / 2 - 3); ctx.fillStyle = '#fff'; ctx.fillText(tx, x + cs / 2, y + cs / 2 - 3);
-    }
+    if (canAttack && attackable(W, o)) { ctx.strokeStyle = '#ffe14a'; ctx.lineWidth = px(2); ctx.strokeRect(x + px(3), y + px(3), cs - px(6), cs - px(6)); }
+    const label = (txt, ox, oy, size, align = 'center') => {
+      ctx.font = `bold ${px(size)}px sans-serif`; ctx.textAlign = align; ctx.textBaseline = 'middle';
+      ctx.lineWidth = px(3); ctx.strokeStyle = '#000c'; ctx.strokeText(txt, x + ox, y + oy); ctx.fillStyle = '#fff'; ctx.fillText(txt, x + ox, y + oy);
+    };
+    if (sc.h > 0 && sc.h < WL.HUMAN_MIN) label(`${(sc.h / 100).toFixed(sc.h < 1000 || big ? (big ? 2 : 1) : 0)}%`, cs / 2, cs / 2 - px(3), huge ? 17 : big ? 13 : 11);   // % de liberação escrita na célula
+    else if (big && !WL.isHuman(sc)) label('0%', cs / 2, cs / 2 - px(3), 12);
+    if (big) label(cellName(o), px(5), px(10), 10, 'left');
   }
-  if (W.sel) { const x = W.sel.c * cs, y = W.sel.r * cs; ctx.strokeStyle = '#fff'; ctx.lineWidth = 4; ctx.strokeRect(x + 2, y + 2, cs - 4, cs - 4); }
+  if (W.sel) { const x = W.sel.c * cs, y = W.sel.r * cs; ctx.strokeStyle = '#fff'; ctx.lineWidth = px(3); ctx.strokeRect(x + px(1), y + px(1), cs - px(2), cs - px(2)); }
+}
+function bindMapInput(W) {
+  const cv = $(W.id + 'Cv'); if (!cv) return;
+  const ptrs = new Map(); let drag = null, pinch = 0, moved = false;
+  const local = e => { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  cv.onwheel = e => { e.preventDefault(); const [x, y] = local(e); zoomAt(W, cv, x, y, e.deltaY < 0 ? 1.2 : 1 / 1.2); };
+  cv.onpointerdown = e => {
+    cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, local(e)); moved = false;
+    if (ptrs.size === 1) { const { v } = mapMetrics(W, cv); drag = { x: e.clientX, y: e.clientY, vx: v.x, vy: v.y }; }
+    if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch = Math.hypot(a[0] - b[0], a[1] - b[1]); }
+  };
+  cv.onpointermove = e => {
+    if (!ptrs.has(e.pointerId)) return;
+    ptrs.set(e.pointerId, local(e));
+    if (ptrs.size === 2) {                                         // pinça: zoom no ponto médio
+      const [a, b] = [...ptrs.values()], d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+      if (pinch > 0 && d > 0) zoomAt(W, cv, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2, d / pinch);
+      pinch = d; moved = true; return;
+    }
+    if (drag) {
+      const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      if (!moved && Math.hypot(dx, dy) < 5) return;
+      moved = true; const { v } = mapMetrics(W, cv); v.x = drag.vx + dx; v.y = drag.vy + dy; drawCampaign(W);
+    }
+  };
+  const end = e => {
+    const was = ptrs.size; ptrs.delete(e.pointerId);
+    if (ptrs.size === 0 && was === 1 && !moved && e.type === 'pointerup') {          // toque curto: seleciona o setor
+      const [x, y] = local(e), { v, base } = mapMetrics(W, cv), k = base * v.k;
+      W.sel = GEO.idx.byKey.get(WL.key(Math.floor(((x - v.x) / k) / (MAPU / GEO.n)), Math.floor(((y - v.y) / k) / (MAPU / GEO.n)))) || null;
+      W.squads = []; renderCampCell(W); drawCampaign(W); requestSquads(W);
+    }
+    if (ptrs.size < 2) pinch = 0;
+    if (ptrs.size === 1) { const [id] = [...ptrs.keys()], { v } = mapMetrics(W, cv); const p = ptrs.get(id); drag = { x: p[0] + cv.getBoundingClientRect().left, y: p[1] + cv.getBoundingClientRect().top, vx: v.x, vy: v.y }; }
+    if (ptrs.size === 0) drag = null;
+  };
+  cv.onpointerup = end; cv.onpointercancel = end;
+  const zb = (id, f) => { const b = $(W.id + id); if (b) b.onclick = () => { const r = cv.getBoundingClientRect(); if (f) zoomAt(W, cv, r.width / 2, r.height / 2, f); else { W.view = { k: 1, x: 0, y: 0, fit: true }; drawCampaign(W); } }; };
+  zb('ZIn', 1.5); zb('ZOut', 1 / 1.5); zb('ZReset', 0);
+  if (!cv._ro && window.ResizeObserver) { cv._ro = new ResizeObserver(() => drawCampaign(W)); cv._ro.observe(cv); }
 }
 function renderCampaign(W) {
   const host = W === WMAP ? $('pane-map') : W.remote ? $('onlMap') : $('pane-camp'); if (!host) return;
@@ -1700,28 +1821,27 @@ function renderCampaign(W) {
     host.innerHTML = `${head}<h2 class="sec">${W.remote ? 'Mundo online' : 'Campanha'}</h2><p style="color:var(--dim)">${!AUTH.enabled && W.remote ? 'O mapa online só existe no servidor com contas (modo local não tem mundo compartilhado).' : W.remote && !net.connected && W !== WMAP ? 'Conectando ao mundo compartilhado…' : 'Carregando o mapa…'}</p>`;
     if (W === WMAP || !W.remote) bindSubNav(host); return;
   }
-  const total = GEO.cells.length, count = f => { let n = 0; for (const s of W.sec.values()) if (WL.dominant(s) === f) n++; return n; };
-  const bar = f => { const n = count(f); return `<div class="cbar"><span style="color:${OWN[f].color}">${OWN[f].name}</span><div class="b"><i style="width:${(n / total * 100).toFixed(1)}%;background:${OWN[f].color}"></i></div><em>${n}</em></div>`; };
+  const count = f => { let n = 0; for (const sc of W.sec.values()) if (WL.dominant(sc) === f) n++; return n; };
+  const title = W === WMAP ? 'Mundo online (só leitura)' : W.remote ? 'Mundo compartilhado' : 'Campanha local';
+  const status = W.remote ? (net.connected || W === WMAP ? (W === WMAP ? '' : ' · ao vivo') : ' · reconectando…') : '';
   host.innerHTML = `${head}
     <div class="camp">
-      <div class="camp-map"><canvas id="${W.id}Cv" width="900" height="900"></canvas>
-        <div class="camp-leg"><span style="--c:${OWN.H.color}">Jogadores</span><span style="--c:${OWN.I.color}">Insetos</span><span style="--c:${OWN.R.color}">Robôs</span><span style="--c:#ffe14a">Pode atacar</span></div></div>
+      <div class="camp-map">
+        <canvas id="${W.id}Cv"></canvas>
+        <div class="zoombtns"><button id="${W.id}ZIn" title="Aproximar">+</button><button id="${W.id}ZOut" title="Afastar">−</button><button id="${W.id}ZReset" title="Ver o mapa todo">⌂</button></div>
+        <div class="map-hint">roda do mouse ou pinça: zoom · arraste: mover · toque: escolher setor</div>
+      </div>
       <div class="camp-side">
-        <div class="camp-box"><h4>${W === WMAP ? `Mapa do mundo online · temporada ${W.season}` : W.remote ? `Mundo compartilhado · temporada ${W.season}` : 'Campanha local'} · turno ${W.turn}</h4>${bar('H')}${bar('I')}${bar('R')}
-          <small>Um setor é dos humanos com 50% ou mais de domínio. Quanto mais território uma facção perde, mais forte ela fica: níveis baixos de ameaça são desativados
-            (insetos: nível ${campMinLevel(W, 'I')}+ · robôs: nível ${campMinLevel(W, 'R')}+).${W === WMAP ? ' Aqui você só olha: para atacar, use o Modo online.' : W.remote ? ` ${net.connected ? 'Conectado: as mudanças dos outros jogadores aparecem ao vivo.' : 'Reconectando ao servidor…'}` : ' Só você joga neste mapa; o progresso fica neste aparelho.'}</small></div>
-        <div class="camp-box" id="${W.id}Cell"></div>
-        <div class="camp-box"><h4>Notícias</h4><div class="camp-log">${W.log.map(l => `<div>${W.remote ? '' : `<i>T${l.t}</i> `}${l.m}</div>`).join('')}</div>
-          ${W.remote ? '' : '<button class="btn ghost" id="campReset" style="margin-top:10px;padding:6px 14px;font-size:11px">Reiniciar campanha</button>'}</div>
+        <div class="camp-box compact"><div class="stat-line"><b>${title}</b><small>T${W.season}·${W.turn}${status}</small></div>
+          <div class="fac-count"><span style="color:${OWN.H.color}">● Jogadores <b>${count('H')}</b></span><span style="color:${OWN.I.color}">● Insetos <b>${count('I')}</b></span><span style="color:${OWN.R.color}">● Robôs <b>${count('R')}</b></span></div>
+          <small>Setor liberado com 50%+ · nível mínimo: insetos ${campMinLevel(W, 'I')}+ · robôs ${campMinLevel(W, 'R')}+</small></div>
+        <div class="camp-box compact" id="${W.id}Cell"></div>
+        <details class="camp-box compact camp-news"><summary>Notícias</summary><div class="camp-log">${W.log.map(l => `<div>${W.remote ? '' : `<i>T${l.t}</i> `}${l.m}</div>`).join('')}</div>
+          ${W.remote || W === WMAP ? '' : '<button class="btn ghost" id="campReset" style="margin-top:8px;padding:5px 12px;font-size:11px">Reiniciar campanha</button>'}</details>
       </div>
     </div>`;
   if (W === WMAP || !W.remote) bindSubNav(host);
-  const cv = $(W.id + 'Cv');
-  cv.onclick = e => {
-    const rc = cv.getBoundingClientRect();
-    W.sel = GEO.idx.byKey.get(WL.key(Math.floor((e.clientX - rc.left) / (rc.width / GEO.n)), Math.floor((e.clientY - rc.top) / (rc.height / GEO.n)))) || null;
-    W.squads = []; renderCampCell(W); drawCampaign(W); requestSquads(W);
-  };
+  bindMapInput(W);
   if ($('campReset')) $('campReset').onclick = () => { if (confirm('Reiniciar a campanha local? O mapa volta ao começo (créditos e melhorias ficam).')) { save.campaign = null; WLOC.sel = null; ensureLocalCampaign(); renderCampaign(WLOC); } };
   renderCampCell(W); drawCampaign(W); requestSquads(W);
 }
@@ -1729,45 +1849,43 @@ function requestSquads(W) { if (W.remote && !W.viewOnly && W.sel && net.connecte
 const esc = t => String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function renderSquadList(W) {
   const el = $(W.id + 'Squads'); if (!el) return;
-  if (!W.squads.length) { el.innerHTML = '<small style="color:var(--dim)">Nenhum esquadrão aberto neste setor agora.</small>'; return; }
-  el.innerHTML = W.squads.map(q => `<div class="sq-row"><span><b>${esc(q.host)}</b> · nível ${q.level} · ${esc((MISSIONS.find(m => m.id === q.mission) || {}).title || '')} · ${fmtTime(q.secs)}${q.friends ? ' · amigos' : ''}</span>
-    <i>${q.members}/${q.max}</i><button class="btn" data-sq="${q.id}" ${net.role === 'solo' || net.role === 'client' ? '' : 'disabled'} style="padding:6px 14px;font-size:11px">Entrar</button></div>`).join('');
+  if (!W.squads.length) { el.innerHTML = '<small style="color:var(--dim)">Nenhum esquadrão aberto aqui agora.</small>'; return; }
+  el.innerHTML = W.squads.map(q => `<div class="sq-row"><span><b>${esc(q.host)}</b> · nv ${q.level} · ${fmtTime(q.secs)}${q.friends ? ' · amigos' : ''}</span>
+    <i>${q.members}/${q.max}</i><button class="btn" data-sq="${q.id}" ${net.role === 'solo' || net.role === 'client' ? '' : 'disabled'} style="padding:5px 12px;font-size:11px">Entrar</button></div>`).join('');
   el.querySelectorAll('[data-sq]').forEach(b => { b.onclick = () => { b.disabled = true; net.send({ t: 'sq:join', room: +b.dataset.sq, ver: net.version }); }; });
 }
-function libHtml(s, gain) {                              // liberação do setor: número grande, barra até 50% e quanto falta
-  const need = WL.HUMAN_MIN, pct = Math.min(100, s.h / need * 100), add = gain ? Math.min(100 - pct, gain / need * 100) : 0;
-  const falta = Math.max(0, need - s.h);
-  return `<div class="lib"><div class="lib-top"><b>${WL.pct2(s.h)}</b><span>de liberação · o setor é liberado com ${WL.pct2(need)}</span></div>
+function libHtml(sc, gain) {                              // liberação do setor: número grande, barra até 50% e quanto falta
+  const need = WL.HUMAN_MIN, pct = Math.min(100, sc.h / need * 100), add = gain ? Math.min(100 - pct, gain / need * 100) : 0;
+  const falta = Math.max(0, need - sc.h);
+  return `<div class="lib"><div class="lib-top"><b>${WL.pct2(sc.h)}</b><span>liberado · meta ${WL.pct2(need)}</span></div>
     <div class="libbar"><i style="width:${pct}%"></i>${add ? `<em style="left:${pct}%;width:${add}%"></em>` : ''}<u></u></div>
-    <small>${falta <= 0 ? 'Setor liberado pelos jogadores.' : `Faltam ${WL.pct2(falta)}${gain ? ` · esta missão soma <b>+${WL.pct2(gain)}</b> (cerca de ${Math.ceil(falta / gain)} vitória${Math.ceil(falta / gain) > 1 ? 's' : ''} iguais)` : ''}`}</small></div>`;
+    <small>${falta <= 0 ? 'Setor liberado.' : `Faltam ${WL.pct2(falta)}${gain ? ` · esta missão: <b>+${WL.pct2(gain)}</b> (~${Math.ceil(falta / gain)} vitória${Math.ceil(falta / gain) > 1 ? 's' : ''})` : ''}`}</small></div>`;
 }
 function renderCampCell(W) {
   const box = $(W.id + 'Cell'); if (!box) return;
   const o = W.sel;
-  if (!o) { box.innerHTML = '<h4>Setor</h4><p style="color:var(--dim);margin:6px 0 0">Toque num quadrado do mapa. Os contornos amarelos são setores que você pode atacar.</p>'; return; }
-  const s = W.sec.get(ckey(o)), f = WL.dominant(s), isClient = net.role === 'client';
-  const pb = (lab, v, c) => `<div class="cbar"><span style="color:${c}">${lab}</span><div class="b"><i style="width:${v / 100}%;background:${c}"></i></div><em style="width:60px">${WL.pct2(v)}</em></div>`;
-  const head = `<h4>Setor ${cellName(o)} · <span style="color:${OWN[f].color}">${OWN[f].name}</span></h4><div class="tagrow2"><span class="tag">${BIOME_NAME[o.b]}</span></div>
-    <div id="${W.id}Lib">${libHtml(s, 0)}</div>
-    ${pb('Humanos', s.h, OWN.H.color)}${pb('Insetos', s.i, OWN.I.color)}${pb('Robôs', s.r, OWN.R.color)}`;
-  if (WL.isHuman(s)) { box.innerHTML = `${head}<p style="color:var(--dim)">Território dos jogadores (${WL.pct2(s.h)}). Os inimigos podem tentar retomá-lo.</p>`; return; }
-  if (W.viewOnly) { box.innerHTML = `${head}<p style="color:var(--dim)">${attackable(W, o) ? 'Este setor pode ser atacado: a missão e o esquadrão aparecem no Modo online.' : 'Fora de alcance dos jogadores por enquanto.'}</p><button class="btn" id="mapGoOnline">Ir para o Modo online</button>`; $('mapGoOnline').onclick = () => { if (!AUTH.user && AUTH.enabled) showAuth('', 'online'); else showTab('online'); }; return; }
-  const squadsBox = W.remote ? `<h4 style="margin-top:12px">Esquadrões neste setor</h4><div id="${W.id}Squads"></div>` : '';
-  if (!attackable(W, o)) { box.innerHTML = `${head}<p style="color:var(--dim)">Fora de alcance. Domine um setor vizinho antes.</p>${squadsBox}`; renderSquadList(W); return; }
-  const ef = enemyOfCell(W, o), fac = OWN[ef].fac, m = cellMission(W, o), min = sectorMin(W, o), L = Math.min(LEVEL_MAX, Math.max(min, save.campLevel || min)), mix = WL.mixOf(s);
+  if (!o) { box.innerHTML = '<small style="color:var(--dim)">Escolha um quadrado no mapa. Contorno amarelo = pode atacar.</small>'; return; }
+  const sc = W.sec.get(ckey(o)), f = WL.dominant(sc), isClient = net.role === 'client';
+  const stack = `<div class="stackbar" title="Humanos ${WL.pct2(sc.h)} · Insetos ${WL.pct2(sc.i)} · Robôs ${WL.pct2(sc.r)}"><i style="width:${sc.h / 100}%;background:${OWN.H.color}"></i><i style="width:${sc.i / 100}%;background:${OWN.I.color}"></i><i style="width:${sc.r / 100}%;background:${OWN.R.color}"></i></div>
+    <div class="stack-leg"><span style="color:${OWN.H.color}">${WL.pct2(sc.h)}</span><span style="color:${OWN.I.color}">${WL.pct2(sc.i)}</span><span style="color:${OWN.R.color}">${WL.pct2(sc.r)}</span></div>`;
+  const head = `<div class="stat-line"><b>Setor ${cellName(o)}</b><small style="color:${OWN[f].color}">${OWN[f].name} · ${BIOME_NAME[o.b]}</small></div>
+    <div id="${W.id}Lib">${libHtml(sc, 0)}</div>${stack}`;
+  if (WL.isHuman(sc)) { box.innerHTML = `${head}<small style="color:var(--dim)">Território dos jogadores. Os inimigos podem tentar retomá-lo.</small>`; return; }
+  if (W.viewOnly) { box.innerHTML = `${head}<small style="color:var(--dim)">${attackable(W, o) ? 'Pode ser atacado no Modo online.' : 'Fora de alcance por enquanto.'}</small><button class="btn" id="mapGoOnline" style="margin-top:6px;padding:6px 14px;font-size:11px">Ir para o Modo online</button>`; $('mapGoOnline').onclick = () => { if (!AUTH.user && AUTH.enabled) showAuth('', 'online'); else showTab('online'); }; return; }
+  const squadsBox = W.remote ? `<div class="mini-h">Esquadrões aqui</div><div id="${W.id}Squads"></div>` : '';
+  if (!attackable(W, o)) { box.innerHTML = `${head}<small style="color:var(--dim)">Fora de alcance. Domine um setor vizinho antes.</small>${squadsBox}`; renderSquadList(W); return; }
+  const ef = enemyOfCell(W, o), fac = OWN[ef].fac, m = cellMission(W, o), min = sectorMin(W, o), L = Math.min(LEVEL_MAX, Math.max(min, save.campLevel || min)), mix = WL.mixOf(sc);
   const offline = W.remote && (!net.connected || !AUTH.user), blockedLocal = !W.remote && net.role !== 'solo';
-  box.innerHTML = `${head}${mix ? '<div class="frontier">⚔ FRONTEIRA: insetos e robôs estão neste mapa e lutam entre si antes de atacar você</div>' : ''}
-    <p>${mix ? 'Facções' : 'Defensor'}: <b style="color:${OWN[ef].color}">${mix ? 'Insetos × Robôs' : OWN[ef].name}</b> · Operação: <b>${FT2(m.title, fac)}</b> <small style="color:var(--dim)" id="${W.id}Rot">· muda em ${fmtMin(WL.nextRotation(worldNow(W)) - worldNow(W))}</small><br><small style="color:var(--dim)">${FT2(m.desc, fac)}</small></p>
-    <div class="lvl"><div class="lvl-head"><small>NÍVEL DE AMEAÇA (mínimo ${min})</small><b id="${W.id}Lv">${L}</b><i>${levelTag(L)}</i></div>
-      <div class="progline" id="${W.id}Prog"></div>
+  box.innerHTML = `${head}${mix ? '<div class="frontier">⚔ Fronteira: insetos e robôs lutam entre si</div>' : ''}
+    <div class="mission-line" title="${esc(FT2(m.desc, fac))}"><b>${FT2(m.title, fac)}</b> <small id="${W.id}Rot">· muda em ${fmtMin(WL.nextRotation(worldNow(W)) - worldNow(W))}</small></div>
+    <div class="lvl-row"><span>Nível <b id="${W.id}Lv">${L}</b> <small id="${W.id}Tag">${levelTag(L)} · mín. ${min}</small></span>
       <div class="lvl-ctl"><button class="btn" id="${W.id}Dn" ${isClient ? 'disabled' : ''}>−</button><input type="range" id="${W.id}Range" min="${min}" max="${LEVEL_MAX}" value="${L}" ${isClient ? 'disabled' : ''}><button class="btn" id="${W.id}Up" ${isClient ? 'disabled' : ''}>+</button></div></div>
-    ${W.remote ? `<div class="set-row" style="padding:8px 0"><div><b style="font-size:12px">Esquadrão</b><small>Quem pode entrar enquanto você joga</small></div>
-      <select id="${W.id}Policy" class="field" style="width:auto;font-size:12px;padding:6px 8px"><option value="open">Aberto</option><option value="friends">Só amigos</option><option value="closed">Fechado</option></select></div>` : ''}
-    <button class="btn primary" id="${W.id}Go" ${!isClient && !missionBusy() && !offline && !blockedLocal ? '' : 'disabled'}>${isClient ? 'Aguardando o host' : offline ? (AUTH.user ? 'Reconectando…' : 'Entre para jogar online') : blockedLocal ? 'Saia da sala online primeiro' : 'Atacar este setor'}</button>
+    ${W.remote ? `<div class="pol-row"><small>Esquadrão</small><select id="${W.id}Policy" class="field"><option value="open">Aberto</option><option value="friends">Só amigos</option><option value="closed">Fechado</option></select></div>` : ''}
+    <button class="btn primary" id="${W.id}Go" style="width:100%" ${!isClient && !missionBusy() && !offline && !blockedLocal ? '' : 'disabled'}>${isClient ? 'Aguardando o host' : offline ? (AUTH.user ? 'Reconectando…' : 'Entre para jogar online') : blockedLocal ? 'Saia da sala online primeiro' : 'Atacar este setor'}</button>
     <div id="${W.id}Msg" class="onlinemsg"></div>${squadsBox}`;
   const rng = $(W.id + 'Range');
-  const prog = v => { const g = WL.missionGain(m.id, v); $(W.id + 'Prog').innerHTML = `Progresso da vitória: <b>+${WL.pct2(g)}</b> de liberação <small>(base ${WL.MISSION_POINTS[m.id]} + nível ${v}; 1 ponto = 0,01%)</small>`; $(W.id + 'Lib').innerHTML = libHtml(s, g); };
-  const set = v => { v = Math.min(LEVEL_MAX, Math.max(min, v)); save.campLevel = v; persist(); rng.value = v; $(W.id + 'Lv').textContent = v; prog(v); };
+  const prog = v => { const g = WL.missionGain(m.id, v); $(W.id + 'Lib').innerHTML = libHtml(sc, g); };
+  const set = v => { v = Math.min(LEVEL_MAX, Math.max(min, v)); save.campLevel = v; persist(); rng.value = v; $(W.id + 'Lv').textContent = v; $(W.id + 'Tag').textContent = `${levelTag(v)} · mín. ${min}`; prog(v); };
   prog(L);
   rng.oninput = e => set(+e.target.value); $(W.id + 'Dn').onclick = () => set(+rng.value - 1); $(W.id + 'Up').onclick = () => set(+rng.value + 1);
   if ($(W.id + 'Policy')) { $(W.id + 'Policy').value = squadPolicy; $(W.id + 'Policy').onchange = e => { squadPolicy = e.target.value; if (net.role === 'host') net.send({ t: 'sq:policy', policy: squadPolicy }); }; }
@@ -1775,7 +1893,7 @@ function renderCampCell(W) {
   go.onclick = async () => {
     if (fac === 'bots' || mix) { if (!botsReady()) { go.disabled = true; go.textContent = 'Carregando robôs…'; try { await loadBots(); } catch { /* usa o modelo simples */ } } }
     const h = WL.hash2(o.c, o.r), level = +rng.value;
-    const opts = { cell: ckey(o), faction: fac, biome: o.b, R: 80 + (h % 40), rocks: 35 + (h >> 4) % 45, mix, remote: W.remote, sector: { name: cellName(o), h: s.h, gain: WL.missionGain(m.id, level) } };
+    const opts = { cell: ckey(o), faction: fac, biome: o.b, R: 80 + (h % 40), rocks: 35 + (h >> 4) % 45, mix, remote: W.remote, sector: { name: cellName(o), h: sc.h, gain: WL.missionGain(m.id, level) } };
     if (!W.remote) return startMission(m.id, level, opts);
     const msg = t => { const el = $(W.id + 'Msg'); if (el) el.textContent = t; };
     go.disabled = true;
@@ -2106,6 +2224,7 @@ const ENEMY_INFO = [
   ['Rastejador', 'Veloz e frágil. Ataca em bando, corpo a corpo.'], ['Cuspidor', 'Mantém distância e lança bolas de ácido.'],
   ['Bruto', 'Enorme e resistente. Cada golpe dói.'], ['Bombardeiro', 'Corre até você e explode. Atire de longe.'],
   ['Investidor', 'Avisa e investe em linha reta. Desvie com o dash.'], ['Rainha', 'Chefe da colmeia: rajadas, golpes e invocações.'],
+  ['Titã ácido', 'Gigante lento (nível 6+). Pisa em área e cospe um jato de ácido: mantenha distância e saia da linha do jato.'],
 ];
 
 function levelPreview(m, L) {
@@ -2795,6 +2914,30 @@ function enemyTarget(e) {
   return { pos, gen: false, rad: 0, pid: near ? near.id : -1 };
 }
 
+function spawnAcid(from, to, speed, dmg) {                // gota do jato de ácido: voa em arco até o alvo
+  const dx = to.x - from.x, dz = to.z - from.z, hd = Math.max(1, Math.hypot(dx, dz)), t = hd / speed, G = 9;
+  const v = new THREE.Vector3(dx / hd * speed, (to.y - from.y) / t + 0.5 * G * t, dz / hd * speed);
+  const pm = new THREE.Mesh(new THREE.SphereGeometry(0.55, 8, 6), new THREE.MeshBasicMaterial({ color: 0x9dff1a }));
+  pm.position.copy(from); scene.add(pm);
+  projectiles.push({ id: uid(), m: pm, v, life: 3, dmg: dmg * mods.edmg, big: false, fac: 'bugs', acid: true, g: G });
+}
+function titanStomp(e, dir) {                               // pisada: dano em área à frente do Titã
+  const c = e.mesh.position.clone().addScaledVector(dir, 6.5), R = 10;
+  boomFx(c, R); net.all({ k: 'fx', t: 'boom', x: c.x, z: c.z, r: R });
+  for (const p of livePlayers()) { const d = Math.hypot(p.pos.x - c.x, p.pos.z - c.z); if (d < R) hurtPlayer(p.id, e.t.dmg * e.dm * mods.edmg * (1 - 0.5 * d / R)); }
+  if (generator && generator.active && Math.hypot(generator.x - c.x, generator.z - c.z) < R + 2.5) damageGenerator(e.t.dmg * e.dm * 2);
+  if (mixFac) for (const o of [...enemies]) if (o.fac !== e.fac && o.mesh.position.distanceTo(c) < R) damageEnemy(o, e.t.dmg * 3, -2);
+  alertNear(c, 80);
+}
+function titanJet(e, dir, tg, dt) {                         // jato de ácido pela boca: ~16 gotas por segundo, mira devagar (dá para desviar andando de lado)
+  e.jetAcc += dt * 16;
+  const from = e.mesh.position.clone().addScaledVector(dir, 4.2).setY(4.6);
+  while (e.jetAcc >= 1) {
+    e.jetAcc -= 1;
+    const to = tg.pos.clone().add(new THREE.Vector3(rand(-1.2, 1.2), 0.8, rand(-1.2, 1.2)));
+    spawnAcid(from, to, rand(26, 34), 5 * e.dm);
+  }
+}
 function spitAt(from, dir, speed, dmg, big, fac = curFaction) {
   const bt = fac === 'bots';
   const pm = new THREE.Mesh(new THREE.SphereGeometry(big ? (bt ? 0.3 : 0.45) : (bt ? 0.14 : 0.28), 8, 6), new THREE.MeshBasicMaterial({ color: bt ? (big ? 0xff3030 : 0xffb03a) : (big ? 0xff40c0 : 0xa4ff6a) }));
@@ -2832,7 +2975,7 @@ function updateEnemies(dt) {
     };
     e.phase += dt * (e.type === 'crawler' || e.type === 'bomber' ? 14 : 7);
     m.position.y = (m.userData.bot || m.userData.spider) ? 0 : Math.abs(Math.sin(e.phase)) * 0.12;
-    m.rotation.y = Math.atan2(-dir.x, -dir.z);
+    if (e.type !== 'titan') m.rotation.y = Math.atan2(-dir.x, -dir.z);
 
     if (e.type === 'spitter') {
       const keep = 16;
@@ -2868,6 +3011,26 @@ function updateEnemies(dt) {
       } else if (e.st === 'stun') {
         if (e.stT <= 0) { e.st = 'walk'; e.stT = 2.5; }
       }
+    } else if (e.type === 'titan') {
+      e.stompCd -= dt; e.jetCd -= dt;
+      const want = Math.atan2(-dir.x, -dir.z); let dr = want - m.rotation.y; dr = Math.atan2(Math.sin(dr), Math.cos(dr));
+      m.rotation.y += Math.max(-0.8 * dt, Math.min(0.8 * dt, dr));              // gira devagar: dá para contornar
+      const fwd = new THREE.Vector3(-Math.sin(m.rotation.y), 0, -Math.cos(m.rotation.y));
+      if (e.st === 'stomp') {
+        e.stT -= dt;
+        if (!e.hitDone && e.stT <= 1.8 - 0.83) { e.hitDone = true; titanStomp(e, fwd); }
+        if (e.stT <= 0) { e.st = 'walk'; e.stompCd = rand(3.5, 5.5); }
+      } else if (e.st === 'jet') {
+        e.stT -= dt; const t = 2.4 - e.stT;
+        if (t > 0.82 && t < 2.02) titanJet(e, fwd, tg, dt);
+        if (e.stT <= 0) { e.st = 'walk'; e.jetCd = rand(7, 11); e.jetAcc = 0; }
+      } else {
+        if (dist > 8) walkTo(e.t.speed);
+        const facing = Math.abs(dr) < 0.45;                                       // só ataca de frente
+        if (e.stompCd <= 0 && dist < 12 && facing) { e.st = 'stomp'; e.stT = 1.8; e.hitDone = false; }
+        else if (e.jetCd <= 0 && dist > 14 && dist < 50 && facing) { e.st = 'jet'; e.stT = 2.4; e.jetAcc = 0; }
+      }
+      mission.boss = { hp: e.hp, maxHp: e.maxHp, titan: true };
     } else if (e.type === 'queen') {
       e.atkCd -= dt; e.volleyCd -= dt; e.summonCd -= dt;
       const enraged = e.hp < e.maxHp * 0.5;
@@ -2903,6 +3066,7 @@ function updateEnemies(dt) {
     }
     resolveRocks(m.position, e.t.radius * 0.6);
     animateSpider(e, dt, Math.hypot(m.position.x - beforeX, m.position.z - beforeZ) > 0.002);
+    animateTitan(e, dt, Math.hypot(m.position.x - beforeX, m.position.z - beforeZ) > 0.002);
   }
   animateBots(dt);
 }
@@ -2910,15 +3074,17 @@ function updateEnemies(dt) {
 function updateProjectiles(dt) {
   const live = livePlayers();
   for (const p of [...projectiles]) {
+    if (p.g) p.v.y -= p.g * dt;
     p.m.position.addScaledVector(p.v, dt);
     p.life -= dt;
     for (const q of live) {
-      if (p.m.position.distanceTo(q.pos.clone().setY(1.1)) < (p.big ? 1.2 : 0.9)) { hurtPlayer(q.id, p.dmg); p.life = 0; break; }
+      if (p.m.position.distanceTo(q.pos.clone().setY(1.1)) < (p.acid ? 1.5 : p.big ? 1.2 : 0.9)) { hurtPlayer(q.id, p.dmg); p.life = 0; if (p.acid) burst(p.m.position.clone(), 0x9dff1a, 6, 4); break; }
     }
     if (mixFac && p.life > 0) for (const o of enemies) {                      // tiro da facção inimiga acerta quem é da outra
       if (o.fac !== p.fac && p.m.position.distanceTo(o.mesh.position.clone().setY(o.t.height)) < o.t.radius) { damageEnemy(o, p.dmg, -2); p.life = 0; break; }
     }
     if (p.life <= 0 || p.m.position.y < 0) {
+      if (p.acid && p.m.position.y < 0.5) burst(p.m.position.clone().setY(0.2), 0x9dff1a, 5, 3.5);
       scene.remove(p.m);
       projectiles.splice(projectiles.indexOf(p), 1);
     }
@@ -3019,6 +3185,11 @@ function updateHud() {
   const orb = player.strikeCd > 0 ? `${Math.ceil(player.strikeCd)}s` : 'pronto';
   $('cd').textContent = isTouch ? `Suprimentos: ${sup} · Orbital: ${orb}` : `Suprimentos (E): ${sup} · Orbital (Q): ${orb}`;
   if (mission.id === 'queen' && mission.boss) $('bossBar').style.width = Math.max(0, mission.boss.hp / mission.boss.maxHp * 100) + '%';
+  else if (mission.id !== 'queen') {
+    const tb = mission.boss && mission.boss.titan ? mission.boss : null;
+    $('boss').style.display = tb ? 'block' : 'none';
+    if (tb) { $('bossName').textContent = 'TITÃ ÁCIDO'; $('bossBar').style.width = Math.max(0, tb.hp / tb.maxHp * 100) + '%'; }
+  }
   $('xpBar').style.width = Math.min(100, xp / xpNeed * 100) + '%';
   $('lvl').textContent = `NV ${level} · XP ${Math.floor(xp)} / ${xpNeed}`;
   $('kills').textContent = 'Abates: ' + kills;
@@ -3120,11 +3291,11 @@ function buildSnapshot() {
   for (const o of Object.values(others)) if (o.last) pl.push(Object.assign({ id: o.id, al: o.status === 'alive' ? 1 : 0 }, o.last));
   const en = enemies.map(e => [e.id, TYPE_LIST.indexOf(e.type), r1(e.mesh.position.x), r1(e.mesh.position.z), r2(e.mesh.rotation.y),
     Math.max(0, Math.round(e.hp / e.maxHp * 100)), (e.elite ? 1 : 0) | ((ST_CODE[e.st] || 0) << 1), e.fac === 'bots' ? 1 : 0]);
-  const pr = projectiles.map(p => [p.id, r1(p.m.position.x), r1(p.m.position.y), r1(p.m.position.z), (p.big ? 1 : 0) | (p.fac === 'bots' ? 2 : 0)]);
+  const pr = projectiles.map(p => [p.id, r1(p.m.position.x), r1(p.m.position.y), r1(p.m.position.z), (p.big ? 1 : 0) | (p.fac === 'bots' ? 2 : 0) | (p.acid ? 4 : 0)]);
   const hud = {
     ti: mission.title, tx: mission.text, pg: r2(mission.progress), xp: Math.round(xp), xn: xpNeed, lv: level, ll: mission.livesLeft || 0,
     kl: kills, el: Math.round(elapsed), wp: waypoint ? [r1(waypoint.x), r1(waypoint.z), waypointHide] : null,
-    bs: mission.boss ? [Math.max(0, Math.round(mission.boss.hp)), Math.round(mission.boss.maxHp)] : null,
+    bs: mission.boss ? [Math.max(0, Math.round(mission.boss.hp)), Math.round(mission.boss.maxHp), mission.boss.titan ? 1 : 0] : null,
     md: [mods.hp, mods.count, mods.speed, mods.edmg, mods.elite],
   };
   const ob = {
@@ -3180,10 +3351,10 @@ function applySnapshot(d) {
     seenP.add(a[0]);
     let p = projById.get(a[0]);
     if (!p) {
-      const big = a[4] & 1, bt = !!(a[4] & 2);
-      const m = new THREE.Mesh(new THREE.SphereGeometry(big ? (bt ? 0.3 : 0.45) : (bt ? 0.14 : 0.28), 8, 6), new THREE.MeshBasicMaterial({ color: bt ? (big ? 0xff3030 : 0xffb03a) : (big ? 0xff40c0 : 0xa4ff6a) }));
-      m.position.set(a[1], a[2], a[3]); scene.add(m); p = { id: a[0], m, tp: new THREE.Vector3() }; projById.set(a[0], p); projectiles.push(p);
-      if (!bt) {
+      const big = a[4] & 1, bt = !!(a[4] & 2), acid = !!(a[4] & 4);
+      const m = new THREE.Mesh(new THREE.SphereGeometry(acid ? 0.55 : big ? (bt ? 0.3 : 0.45) : (bt ? 0.14 : 0.28), 8, 6), new THREE.MeshBasicMaterial({ color: acid ? 0x9dff1a : bt ? (big ? 0xff3030 : 0xffb03a) : (big ? 0xff40c0 : 0xa4ff6a) }));
+      m.position.set(a[1], a[2], a[3]); scene.add(m); p = { id: a[0], m, tp: new THREE.Vector3(), acid }; projById.set(a[0], p); projectiles.push(p);
+      if (!bt && !acid) {
         let shooter = null, nearest = 2.4;
         for (const e of enemies) if (e.fac === 'bugs' && e.type === 'spitter') {
           const d = Math.hypot(e.mesh.position.x - a[1], e.mesh.position.z - a[3]);
@@ -3194,12 +3365,12 @@ function applySnapshot(d) {
     }
     p.tp.set(a[1], a[2], a[3]);
   }
-  for (const p of [...projectiles]) if (!seenP.has(p.id)) { scene.remove(p.m); projById.delete(p.id); projectiles.splice(projectiles.indexOf(p), 1); }
+  for (const p of [...projectiles]) if (!seenP.has(p.id)) { if (p.acid && p.m.position.y < 1.5) burst(p.m.position.clone().setY(0.2), 0x9dff1a, 5, 3.5); scene.remove(p.m); projById.delete(p.id); projectiles.splice(projectiles.indexOf(p), 1); }
 
   const h = d.hud;
   mission.title = h.ti; mission.text = h.tx; mission.progress = h.pg; mission.livesLeft = h.ll;
   xp = h.xp; xpNeed = h.xn; level = h.lv; kills = h.kl; elapsed = h.el;
-  mission.boss = h.bs ? { hp: h.bs[0], maxHp: h.bs[1] } : null;
+  mission.boss = h.bs ? { hp: h.bs[0], maxHp: h.bs[1], titan: !!h.bs[2] } : null;
   if (h.wp) { waypoint = waypoint || new THREE.Vector3(); waypoint.set(h.wp[0], 0, h.wp[1]); waypointHide = h.wp[2]; } else waypoint = null;
   [mods.hp, mods.count, mods.speed, mods.edmg, mods.elite] = h.md;
   $('oTitle').textContent = `${mission.title} · NV ${mission.level}`;
@@ -3246,6 +3417,7 @@ function updateClientWorld(dt) {
     if (e.type === 'bomber') m.scale.setScalar(e.t.scale * (1 + 0.1 * Math.sin(e.phase * 2)));
     else if (e.type === 'charger' && e.st === 'wind') m.scale.setScalar(e.t.scale * (1 + 0.04 * Math.sin(e.phase * 8)));
     animateSpider(e, dt, Math.hypot(m.position.x - beforeX, m.position.z - beforeZ) > 0.002);
+    animateTitan(e, dt, Math.hypot(m.position.x - beforeX, m.position.z - beforeZ) > 0.002);
   }
   animateBots(dt);
   for (const p of projectiles) if (p.tp) p.m.position.lerp(p.tp, k);
@@ -3322,7 +3494,7 @@ net.onClosed = msg => {
 
 async function clientStartMission(d) {
   ensureAudio();
-  await loadSpider();
+  await loadSpider(); if ((d.level || 1) >= TITAN_MIN_LEVEL && d.faction !== 'bots') await loadTitan();
   if (missionBusy()) { clearWorld(); }
   relax = !!d.relax;
   campaignCell = d.cell || null; campaignRemote = !!d.remote; campSector = d.sector || null; mixFac = null; clientMixed = false;
@@ -3545,7 +3717,7 @@ loop();
 
 // Gancho para testes automatizados e futuro multiplayer (estado serializável)
 window.__freedivers = window.__multipunk = {
-  get save() { return save; }, WLOC, WNET, WMAP, GEO, CHAT: () => CHAT, AUTH, WL, FR: () => FR, campaignResult, campMinLevel, attackable, cellMission, missionUnlocked, get party() { return party; }, toast,
+  get save() { return save; }, loadTitan, WLOC, WNET, WMAP, GEO, CHAT: () => CHAT, AUTH, WL, FR: () => FR, campaignResult, campMinLevel, attackable, cellMission, missionUnlocked, get party() { return party; }, toast,
   player, keys, tick, startMission, setFaction, settings, get curFaction() { return curFaction; }, loadBots, botsReady,
   get enemies() { return enemies; }, get state() { return state; }, get kills() { return kills; },
   get mission() { return mission; }, setMouse(v) { mouseDown = v; },

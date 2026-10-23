@@ -307,8 +307,9 @@
 
   /* ───────── Campanha ───────── */
   .op-item.locked { opacity: .5; }
-  .camp { display: grid; grid-template-columns: minmax(280px, 620px) minmax(0, 1fr); gap: 20px; align-items: start; } .camp-map { min-width: 0; }
-  canvas#campCv, canvas#onlCv, canvas#mapCv { width: 100%; max-width: 100%; height: auto; aspect-ratio: 1; display: block; border: 1px solid var(--line2); cursor: pointer; background: #06101c; }
+  .camp { display: grid; grid-template-columns: minmax(0, 1fr) 290px; gap: 12px; align-items: start; } .camp-map { min-width: 0; position: relative; }
+  canvas#campCv, canvas#onlCv, canvas#mapCv { display: block; width: 100%; height: calc(100vh - 170px); min-height: 380px; border: 1px solid var(--line2); cursor: grab; background: #06101c; touch-action: none; }
+  canvas#campCv:active, canvas#onlCv:active, canvas#mapCv:active { cursor: grabbing; }
   .camp-leg { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--dim); }
   .camp-leg span::before { content: ""; display: inline-block; width: 10px; height: 10px; background: var(--c); margin-right: 6px; }
   .camp-side { display: flex; flex-direction: column; gap: 12px; }
@@ -371,6 +372,26 @@
   .chat-tabs button { background: #0a0e13; border: 1px solid var(--line2); color: var(--dim); font: inherit; font-size: 12px; padding: 5px 10px; } .chat-tabs button.on { color: var(--text); border-color: var(--accent); }
   .chat-msgs { height: 260px; overflow: auto; background: #0a0e13; border: 1px solid var(--line); padding: 8px; display: flex; flex-direction: column; gap: 6px; }
   .cm { font-size: 13px; line-height: 1.4; word-break: break-word; } .cm b { color: var(--blue); margin-right: 6px; font-weight: 600; } .cm.mine b { color: var(--accent); } .cm i { font-style: normal; color: var(--dim); font-size: 10px; margin-left: 8px; font-family: var(--mono); }
+
+  /* ───────── Mapa grande com zoom e painel enxuto ───────── */
+  .zoombtns { position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 4px; }
+  .zoombtns button { width: 36px; height: 36px; background: #10151cdd; border: 1px solid var(--line2); color: var(--text); font: 700 18px/1 var(--mono); } .zoombtns button:hover { border-color: var(--accent); color: var(--accent); }
+  .map-hint { position: absolute; left: 10px; bottom: 10px; font-size: 11px; color: #cdd8e5; background: #0a0e13b0; padding: 4px 8px; pointer-events: none; letter-spacing: 1px; }
+  .camp-side { display: flex; flex-direction: column; gap: 8px; max-height: calc(100vh - 170px); overflow: auto; }
+  .camp-box.compact { padding: 10px 12px; clip-path: none; } .camp-box.compact small { margin-top: 4px; font-size: 11px; line-height: 1.35; }
+  .stat-line { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; } .stat-line b { font-size: 14px; letter-spacing: 2px; text-transform: uppercase; } .stat-line small { margin: 0 !important; }
+  .fac-count { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; margin-top: 6px; } .fac-count b { font-family: var(--mono); color: var(--text); }
+  .camp-box.compact .lib { margin: 6px 0 6px; padding: 8px 10px; } .camp-box.compact .lib-top b { font-size: 28px; } .camp-box.compact .libbar { height: 12px; margin: 6px 0 4px; }
+  .stackbar { display: flex; height: 8px; background: #0009; margin-top: 2px; } .stackbar i { display: block; height: 100%; }
+  .stack-leg { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11px; margin: 3px 0 6px; }
+  .mission-line { margin: 6px 0; font-size: 13px; } .mission-line small { color: var(--dim); }
+  .lvl-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; } .lvl-row > span { font-size: 13px; } .lvl-row b { font-family: var(--mono); font-size: 20px; color: var(--accent); } .lvl-row small { color: var(--dim); font-size: 10px; }
+  .lvl-row .lvl-ctl { margin: 0; flex: 1; min-width: 150px; } .lvl-row .lvl-ctl .btn { padding: 2px 10px; font-size: 14px; }
+  .pol-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; } .pol-row .field { width: auto; font-size: 12px; padding: 5px 8px; letter-spacing: 0; }
+  .mini-h { margin-top: 10px; font-size: 11px; letter-spacing: 3px; color: var(--dim); text-transform: uppercase; }
+  .camp-news summary { cursor: pointer; font-size: 12px; letter-spacing: 3px; text-transform: uppercase; color: var(--dim); } .camp-news .camp-log { margin-top: 6px; max-height: 120px; }
+  .frontier { margin: 6px 0; padding: 4px 8px; font-size: 11px; }
+  @media (max-width: 900px) { .camp { grid-template-columns: 1fr; } canvas#campCv, canvas#onlCv, canvas#mapCv { height: 62vh; } .camp-side { max-height: none; } }
 </style>
 </head>
 <body>

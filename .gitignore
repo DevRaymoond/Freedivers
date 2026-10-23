@@ -12,3 +12,4 @@ assets/*_preview.png
 !.env.example
 deploy/.env
 *.blend1
+tools/preview/

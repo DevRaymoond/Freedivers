@@ -117,9 +117,14 @@ botão **FOGO** grande (segure e arraste para mirar atirando) e botões DASH, RE
 - Pontuação (baixa de propósito): missão, tempo, abates, precisão e nível; perde por mortes, suprimentos e orbitais. Rank D–S. A pontuação é da equipe; os créditos são individuais.
 - Melhorias permanentes (+1 de dano, +5 de vida…): 500 créditos + 250 por nível.
 
+## Titã ácido (insetos, nível de ameaça 6+)
+Gigante lento (~9 m) com 6 pernas: **anda devagar**, **ataca pisando** (área à frente, impacto no meio da animação, dá para sair correndo) e **cospe um jato de ácido** (gotas em arco
+que miram devagar: andar de lado desvia). Aparece de tempos em tempos (um por vez) e nas ondas 6 e 8 da Operação Gerador; tem barra de vida própria e deixa suprimentos ao morrer.
+Modelo: `assets/titan.glb` (ações Idle, Walk, Stomp, Jet) gerado por `tools/build_titan.py`; a validação dos modelos novos está em `tools/validar_modelos.md`.
+
 ## Estrutura
 - `server.js` servidor estático + relé WebSocket das salas · `net.js` cliente de rede · `main.js` jogo · `bots.js` robôs · `cursor.js` cursor "blob"
-- `assets/character.glb` personagem · `assets/robot.glb` inimigo robô · `assets/spider.glb` aranha rigada (Idle, Walk e Spit) · `lib/` three.js · `tools/` geração de modelos e visualizadores
+- `assets/character.glb` personagem · `assets/robot.glb` inimigo robô · `assets/spider.glb` aranha rigada (Idle, Walk e Spit) · `assets/titan.glb` titã ácido (Idle, Walk, Stomp e Jet) · `lib/` three.js · `tools/` geração de modelos e visualizadores
 - Personagem: `tools/build_final.py` (precisa de Python; `tools/source/` com os modelos originais não vai para o repositório):
   `python tools/build_final.py tools/source/cyber_rigged.glb tools/source/texture.webp assets/character.glb --fix-face`
 - Aranha: abra `assets/spider.blend` no Blender; `tools/build_spider.py` regenera o projeto e o `.glb` (com a malha reduzida) usando o FBX e as texturas locais em `tools/source/spider/`; depois rode `tools/shrink_glb.py assets/spider.glb` para encolher as texturas.

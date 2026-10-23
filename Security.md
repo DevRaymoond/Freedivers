@@ -27,3 +27,7 @@ O combate das salas continua decidido pelo host, risco preexistente documentado 
 - **Histórico e recentes:** ficam em `localStorage` do aparelho, por conta, e podem ser apagados pelo jogador. O servidor não guarda quem jogou com quem.
 - **`GET /api/world`:** público e somente leitura (porcentagens por setor e notícias, sem dados de usuários), com limite de 60 requisições/minuto por IP.
 - **Testes:** `tools/test_social.js` cobre DM, canal do esquadrão, bloqueio e limite; `tools/test_auth.js` cobre o endpoint público. Não houve teste de carga nem pentest externo.
+
+## Atualização 2026-10-23 — titã ácido
+- Sem novas rotas, permissões ou dados persistidos. O estado do Titã (`stomp`/`jet`) e o bit de ácido do projétil viajam no snapshot do host já existente; o combate continua decidido pelo host (risco já documentado). O GLB novo é estático e público, servido pela allowlist existente.
+- Não houve testes de segurança específicos: a mudança é de gameplay e asset.
