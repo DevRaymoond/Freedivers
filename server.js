@@ -50,7 +50,7 @@ function sendFile(req, res, file) {
   });
 }
 // Versão = hash do conteúdo dos arquivos do jogo. Muda sozinha quando você atualiza o código na VPS.
-const APP_FILES = ['index.html', 'main.js', 'net.js', 'cursor.js', 'bots.js', 'worldlogic.mjs', 'assets/character.glb', 'assets/robot.glb', 'assets/spider.glb', 'assets/titan.glb', 'assets/world.json', 'assets/worldmap.jpg'];
+const APP_FILES = ['index.html', 'main.js', 'net.js', 'cursor.js', 'bots.js', 'worldlogic.mjs', 'assets/character.glb', 'assets/robot.glb', 'assets/spider.glb', 'assets/crawler.glb', 'assets/pusher.glb', 'assets/titan.glb', 'assets/world.json', 'assets/worldmap.jpg'];
 let verCache = { sig: '', hash: 'dev' };
 function appVersion() {
   let sig = '';

@@ -61,3 +61,8 @@
 
 ## 2026-10-23 (3 setores por vez)
 - Cada facção empurra no máximo **3 setores por vez** até eles chegarem a 70% (`MAX_PUSH`); os dominados seguem até 100% sem ocupar vaga. Vagas: primeiro os em andamento em que a facção lidera, depois os novos; quem perde a disputa com a outra facção fica por último (evita setores empatados travando as vagas). Sem jogadores, o planeta cai em ~30 dias.
+
+## 2026-10-23 (novos mobs rigados e personagem)
+- **Rastejador** passa a usar o modelo do corredor (`assets/crawler.glb`) e o **investidor** o do empurrador (`assets/pusher.glb`), com rig e marcha de aranha: pernas em duas partes, passos alternados/trípode, corpo de lagarta ondulando (corredor) e ações de combate: `Attack` (investida de cabeça), `Wind` (agacha e treme), `Charge` (corrida baixa) e `Stun` (cabeça baixa). Geração em `tools/build_mob.py`; malhas ~3,7 mil e ~4,7 mil vértices; olhos com material emissivo.
+- Jogo: kit genérico de criaturas rigadas (`makeCreatureMesh`, `animateCreature`), passo sincronizado com a velocidade, animação mais espaçada à distância e escalas ajustadas; modelos de reserva continuam se o arquivo não carregar. Facção robôs não muda.
+- Personagem: camada procedural sobre os clipes (inclina para onde corre, recua ao atirar, recarregar e levar dano), também nos outros jogadores.

@@ -50,11 +50,11 @@ const FT = s => curFaction !== 'bots' ? s : String(s)
   .replace(/ela invoca/g, 'ele convoca').replace(/Chefe da colmeia/g, 'Chefe da fortaleza').replace(/enxame/g, 'exército').replace(/colmeia/g, 'fortaleza');
 
 const ENEMY_TYPES = {
-  crawler: { hp: 30, speed: 6.2, dmg: 9, radius: 0.9, height: 0.8, scale: 1, color: 0x8a2b22 },
+  crawler: { hp: 30, speed: 6.2, dmg: 9, radius: 0.9, height: 0.8, scale: 2.1, color: 0x8a2b22 },
   spitter: { hp: 45, speed: 3.4, dmg: 12, radius: 0.95, height: 0.65, scale: 1.6, color: 0x3d7a34 },
   brute:   { hp: 450, speed: 3.6, dmg: 28, radius: 2.0, height: 2.0, scale: 2.4, color: 0x4a3a66 },
   bomber:  { hp: 40, speed: 5.4, dmg: 35, radius: 0.9, height: 0.9, scale: 1, color: 0xb8651f },
-  charger: { hp: 150, speed: 4.2, dmg: 32, radius: 1.3, height: 1.1, scale: 1.5, color: 0x56697a },
+  charger: { hp: 150, speed: 4.2, dmg: 32, radius: 1.3, height: 1.1, scale: 2.2, color: 0x56697a },
   queen:   { hp: 1800, speed: 2.7, dmg: 38, radius: 3.4, height: 3.0, scale: 4.4, color: 0x6a2b6f },
   // Titã ácido: gigante lento; pisa (área) e cospe um jato de ácido (inspirado no Bile Titan). Esfera de acerto no meio do corpo (as pernas são longas).
   titan:   { hp: 2200, speed: 1.7, dmg: 42, radius: 4.2, height: 4.4, scale: 9, color: 0xb59a62 },
@@ -277,12 +277,12 @@ function makeCapsuleBody(group) {
 }
 
 function createRig(group) {
-  const rig = { group, mixer: null, actions: {}, wts: {}, fullW: 0, locoPhase: 0 };
+  const rig = { group, mixer: null, actions: {}, wts: {}, fullW: 0, locoPhase: 0, model: null, lean: { x: 0, z: 0 } };
   if (!charAsset) { makeCapsuleBody(group); return rig; }
   const model = cloneSkeleton(charAsset.scene);
   model.rotation.y = Math.PI;                    // o modelo olha para +Z; o jogo olha para -Z
   model.traverse(o => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
-  group.add(model);
+  group.add(model); rig.model = model;
   rig.mixer = new THREE.AnimationMixer(model);
   for (const clip of charAsset.animations) {
     const a = rig.mixer.clipAction(clip);
@@ -348,6 +348,14 @@ function animateRig(rig, S, dt) {
   actions.Dash.setEffectiveWeight(dead ? 0 : rig.fullW);
   actions.Death.setEffectiveWeight(dead ? rig.fullW : 0);
   rig.mixer.update(dt);
+  // camada procedural por cima dos clipes: inclina o corpo para onde corre, recua no tiro e no dano (o corpo "responde" ao movimento)
+  if (rig.model) {
+    const run = S.moveKind === 'Run' ? 1 : 0.45, a = (S.moveAlpha || 0) * Math.PI / 180, mv = S.moving && !dead && !S.rolling ? run : 0;
+    const tx = -0.10 * mv * Math.cos(a) + (S.hit ? 0.14 : 0) + (S.flashing && !S.reloading ? 0.035 : 0) + (S.reloading ? 0.05 : 0);
+    const tz = -0.08 * mv * Math.sin(a);
+    rig.lean.x = approach(rig.lean.x, dead ? 0 : tx, dt, S.hit ? 26 : 9); rig.lean.z = approach(rig.lean.z, dead ? 0 : tz, dt, 9);
+    rig.model.rotation.x = rig.lean.x; rig.model.rotation.z = rig.lean.z;
+  }
 }
 
 // jogador local
@@ -560,6 +568,55 @@ function animateSpider(enemy, dt, moving) {
   if (every > 1 && (frameNo + (enemy.id | 0)) % every !== 0) return;
   spider.mixer.update(spider.acc); spider.acc = 0;
 }
+// Criaturas rigadas: rastejador (assets/crawler.glb) e investidor (assets/pusher.glb), com marcha de aranha. Ações: Idle, Walk e, por tipo, Attack | Wind, Charge, Stun.
+const CREATURE_FILE = { crawler: 'crawler', charger: 'pusher' };
+const creatureAssets = {}, creaturePromises = {};
+function loadCreature(type) {
+  if (creatureAssets[type]) return Promise.resolve(creatureAssets[type]);
+  if (!creaturePromises[type]) creaturePromises[type] = new GLTFLoader().loadAsync(`./assets/${CREATURE_FILE[type]}.glb`)
+    .then(gltf => (creatureAssets[type] = gltf))
+    .catch(err => { console.warn('Modelo indisponível; usando o reserva.', type, err); creaturePromises[type] = null; return null; });
+  return creaturePromises[type];
+}
+const loadCreatures = () => Promise.all(Object.keys(CREATURE_FILE).map(loadCreature));
+const ONCE_ACTIONS = new Set(['Attack']);
+const CREATURE_SPEED = { crawler: { Walk: 2.1 }, charger: { Walk: 1.5 } };       // sincroniza o passo com a velocidade em solo
+function makeCreatureMesh(type) {
+  const asset = creatureAssets[type], g = new THREE.Group(), model = cloneSkeleton(asset.scene);
+  model.rotation.y = Math.PI;                                    // o modelo olha para +Z; os inimigos avançam por -Z
+  model.traverse(o => { if (o.isMesh) { o.material = o.material.clone(); o.castShadow = true; o.frustumCulled = false; } });
+  g.add(model);
+  const mixer = new THREE.AnimationMixer(model), actions = {};
+  for (const clip of asset.animations) actions[clip.name] = mixer.clipAction(clip);
+  actions.Idle.play(); actions.Idle.time = Math.random() * actions.Idle.getClip().duration;
+  g.scale.setScalar(ENEMY_TYPES[type].scale);
+  g.userData.cr = { mixer, actions, active: 'Idle', atkT: 0, type };
+  return g;
+}
+function setCreatureAction(C, name) {
+  if (C.active === name) return;
+  const next = C.actions[name], prev = C.actions[C.active]; if (!next) return;
+  const once = ONCE_ACTIONS.has(name);
+  next.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat, once ? 1 : Infinity); next.clampWhenFinished = once;
+  next.timeScale = (CREATURE_SPEED[C.type] || {})[name] || 1;
+  next.reset().fadeIn(0.12).play(); if (prev) prev.fadeOut(0.12);
+  C.active = name;
+}
+function triggerCreatureAttack(e) {
+  const C = e.mesh.userData.cr; if (!C || !C.actions.Attack) return;
+  C.atkT = C.actions.Attack.getClip().duration; setCreatureAction(C, 'Attack');
+}
+function animateCreature(e, dt, moving) {
+  const C = e.mesh.userData.cr; if (!C) return;
+  if (C.atkT > 0) C.atkT = Math.max(0, C.atkT - dt);
+  const want = C.type === 'charger' ? (e.st === 'wind' ? 'Wind' : e.st === 'charge' ? 'Charge' : e.st === 'stun' ? 'Stun' : moving ? 'Walk' : 'Idle')
+    : C.atkT > 0 ? 'Attack' : moving ? 'Walk' : 'Idle';
+  setCreatureAction(C, want);
+  C.acc = (C.acc || 0) + dt;
+  const d2c = camPos.distanceToSquared(e.mesh.position), every = d2c > 3600 ? 4 : d2c > 1225 ? 2 : 1;
+  if (every > 1 && (frameNo + (e.id | 0)) % every !== 0) return;
+  C.mixer.update(C.acc); C.acc = 0;
+}
 let titanAsset = null, titanLoadPromise = null;
 function loadTitan() {
   if (titanAsset) return Promise.resolve(titanAsset);
@@ -598,6 +655,7 @@ function makeEnemyMesh(type, fac = curFaction) {
   if (fac === 'bots' && botsReady()) return makeBotMesh(type);
   const t = ENEMY_TYPES[type];
   if (type === 'spitter' && fac !== 'bots' && spiderAsset) return makeSpiderMesh();
+  if (fac !== 'bots' && creatureAssets[type]) return makeCreatureMesh(type);
   const g = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({ color: t.color, roughness: 0.7, flatShading: true });
   const dark = new THREE.MeshStandardMaterial({ color: 0x1a1210, roughness: 0.9 });
@@ -1570,7 +1628,7 @@ let campaignCell = null, campaignRemote = false, curBiome = 'desert', startBase 
 const lateSent = new Set();
 async function startMission(id, levelArg, opts = {}) {
   if (net.role === 'client') return;
-  if ((opts.faction || selFaction) !== 'bots' || opts.mix) { await loadSpider(); if (Math.round(levelArg || 1) >= TITAN_MIN_LEVEL) await loadTitan(); }
+  if ((opts.faction || selFaction) !== 'bots' || opts.mix) { await loadSpider(); await loadCreatures(); if (Math.round(levelArg || 1) >= TITAN_MIN_LEVEL) await loadTitan(); }
   const mi = MISSIONS.findIndex(m => m.id === id);
   if (!opts.cell && !missionUnlocked(mi)) { say('Fase bloqueada: vença a anterior em nível 3 ou mais.', 3); return; }
   ensureAudio();
@@ -3055,7 +3113,7 @@ function patrolMove(e, dt) {
     to.normalize(); m.position.addScaledVector(steerRocks(m.position, to, e.t.radius * 0.6, e), sp * dt);
     m.rotation.y = Math.atan2(-to.x, -to.z);
   } else m.rotation.y = Math.atan2(-Math.sin(pl.heading), -Math.cos(pl.heading));
-  animateSpider(e, dt, d > 0.5);
+  animateSpider(e, dt, d > 0.5); animateCreature(e, dt, d > 0.5);
 }
 
 function updateEnemies(dt) {
@@ -3074,7 +3132,7 @@ function updateEnemies(dt) {
       m.position.addScaledVector(steerRocks(m.position, d0, e.t.radius * 0.6, e, sp >= 0 ? tg : null), Math.abs(sp) * dt * e.spd);
     };
     e.phase += dt * (e.type === 'crawler' || e.type === 'bomber' ? 14 : 7);
-    m.position.y = (m.userData.bot || m.userData.spider) ? 0 : Math.abs(Math.sin(e.phase)) * 0.12;
+    m.position.y = (m.userData.bot || m.userData.spider || m.userData.cr) ? 0 : Math.abs(Math.sin(e.phase)) * 0.12;
     if (e.type !== 'titan') m.rotation.y = Math.atan2(-dir.x, -dir.z);
 
     if (e.type === 'spitter') {
@@ -3101,7 +3159,7 @@ function updateEnemies(dt) {
         else if (dist <= 2.6) { e.atkCd -= dt; if (e.atkCd <= 0) { e.atkCd = 0.9; hurt(e.t.dmg * 0.6); } }
       } else if (e.st === 'wind') {
         m.position.x += rand(-1, 1) * 0.03; m.position.z += rand(-1, 1) * 0.03;
-        m.scale.setScalar(e.t.scale * (1 + 0.04 * Math.sin(e.stT * 60)));
+        if (!m.userData.cr) m.scale.setScalar(e.t.scale * (1 + 0.04 * Math.sin(e.stT * 60)));
         if (e.stT <= 0) { e.st = 'charge'; e.stT = 1.1; e.hitDone = false; m.scale.setScalar(e.t.scale); }
       } else if (e.st === 'charge') {
         m.position.addScaledVector(e.cdir, 17 * dt * e.spd);
@@ -3161,12 +3219,14 @@ function updateEnemies(dt) {
       e.atkCd -= dt;
       if (dist <= reach + 0.3 && e.atkCd <= 0) {
         e.atkCd = e.type === 'brute' ? 1.3 : 0.8;
+        triggerCreatureAttack(e);
         hurt(e.t.dmg);
       }
     }
     resolveRocks(m.position, e.t.radius * 0.6);
     animateSpider(e, dt, Math.hypot(m.position.x - beforeX, m.position.z - beforeZ) > 0.002);
     animateTitan(e, dt, Math.hypot(m.position.x - beforeX, m.position.z - beforeZ) > 0.002);
+    animateCreature(e, dt, Math.hypot(m.position.x - beforeX, m.position.z - beforeZ) > 0.002);
   }
   animateBots(dt);
 }
@@ -3517,11 +3577,12 @@ function updateClientWorld(dt) {
     m.position.x += (e.tx - m.position.x) * k; m.position.z += (e.tz - m.position.z) * k;
     let dr = e.tr - m.rotation.y; dr = Math.atan2(Math.sin(dr), Math.cos(dr)); m.rotation.y += dr * k;
     e.phase += dt * (e.type === 'crawler' || e.type === 'bomber' ? 14 : 7);
-    m.position.y = (m.userData.bot || m.userData.spider) ? 0 : Math.abs(Math.sin(e.phase)) * 0.12;
+    m.position.y = (m.userData.bot || m.userData.spider || m.userData.cr) ? 0 : Math.abs(Math.sin(e.phase)) * 0.12;
     if (e.type === 'bomber') m.scale.setScalar(e.t.scale * (1 + 0.1 * Math.sin(e.phase * 2)));
-    else if (e.type === 'charger' && e.st === 'wind') m.scale.setScalar(e.t.scale * (1 + 0.04 * Math.sin(e.phase * 8)));
+    else if (e.type === 'charger' && e.st === 'wind' && !m.userData.cr) m.scale.setScalar(e.t.scale * (1 + 0.04 * Math.sin(e.phase * 8)));
     animateSpider(e, dt, Math.hypot(m.position.x - beforeX, m.position.z - beforeZ) > 0.002);
     animateTitan(e, dt, Math.hypot(m.position.x - beforeX, m.position.z - beforeZ) > 0.002);
+    animateCreature(e, dt, Math.hypot(m.position.x - beforeX, m.position.z - beforeZ) > 0.002);
   }
   animateBots(dt);
   for (const p of projectiles) if (p.tp) p.m.position.lerp(p.tp, k);
@@ -3598,7 +3659,7 @@ net.onClosed = msg => {
 
 async function clientStartMission(d) {
   ensureAudio();
-  await loadSpider(); if ((d.level || 1) >= TITAN_MIN_LEVEL && d.faction !== 'bots') await loadTitan();
+  await loadSpider(); if (d.faction !== 'bots' || d.mix) await loadCreatures(); if ((d.level || 1) >= TITAN_MIN_LEVEL && d.faction !== 'bots') await loadTitan();
   if (missionBusy()) { clearWorld(); }
   relax = !!d.relax;
   campaignCell = d.cell || null; campaignRemote = !!d.remote; campSector = d.sector || null; mixFac = null; clientMixed = false;
