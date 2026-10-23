@@ -11,7 +11,9 @@ const coarse = matchMedia('(pointer: coarse)').matches && navigator.maxTouchPoin
 function loadSettings() {
   let s = {};
   try { s = JSON.parse(localStorage.getItem(SET_KEY) || '{}'); } catch { /* sem armazenamento */ }
-  return Object.assign({ volume: 0.8, sens: 1, quality: coarse ? 'medium' : 'high', input: 'auto' }, s);
+  const d = Object.assign({ volume: 0.8, sens: 1, quality: coarse ? 'low' : 'high', input: 'auto', vibration: true, v: 2 }, s);
+  if ((s.v || 1) < 2 && coarse) { d.quality = 'low'; d.v = 2; }      // migração: celulares passam a começar leves (a resolução ainda se ajusta sozinha)
+  return d;
 }
 const settings = loadSettings();
 const saveSettings = () => { try { localStorage.setItem(SET_KEY, JSON.stringify(settings)); } catch { /* ok */ } };
@@ -121,8 +123,8 @@ const XP_VALUES = { crawler: 6, spitter: 10, bomber: 12, charger: 26, brute: 60,
 const TITAN_MIN_LEVEL = 6;                 // o Titã só aparece a partir deste nível de ameaça
 
 // ───────────────────────── Cena ─────────────────────────
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, isTouch ? 1.5 : 2));
+const renderer = new THREE.WebGLRenderer({ antialias: !isTouch, powerPreference: 'high-performance' });     // sem antialias no celular: o custo é alto e a tela já é densa
+renderer.setPixelRatio(Math.min(devicePixelRatio, isTouch ? 1 : 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -130,9 +132,9 @@ document.body.prepend(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xc9a27a);
-scene.fog = new THREE.Fog(0xc9a27a, 40, 150);
+scene.fog = new THREE.Fog(0xc9a27a, 40, isTouch ? 120 : 150);
 
-const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 400);
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, isTouch ? 170 : 400);
 
 const hemi = new THREE.HemisphereLight(0xffe7c8, 0x4a3a2a, 0.9);
 scene.add(hemi);
@@ -142,13 +144,15 @@ sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
 Object.assign(sun.shadow.camera, { left: -45, right: 45, top: 45, bottom: -45, near: 1, far: 160 });
 scene.add(sun, sun.target);
+let basePR = 1, resScale = 1;                              // resolução: base da qualidade × ajuste automático por desempenho (celular)
+function setRes() { renderer.setPixelRatio(Math.max(0.5, basePR * resScale)); renderer.setSize(innerWidth, innerHeight); }
 function applyQuality() {
   const q = settings.quality, cap = q === 'high' ? (isTouch ? 1.5 : 2) : q === 'medium' ? 1.25 : 1;
-  renderer.setPixelRatio(Math.min(devicePixelRatio || 1, cap)); renderer.setSize(innerWidth, innerHeight);
+  basePR = Math.min(devicePixelRatio || 1, cap); resScale = 1; setRes();
   const shadows = q !== 'low';
   if (renderer.shadowMap.enabled !== shadows) { renderer.shadowMap.enabled = shadows; scene.traverse(o => { if (o.material) [].concat(o.material).forEach(m => { m.needsUpdate = true; }); }); }
   sun.castShadow = shadows;
-  const size = q === 'high' ? 2048 : 1024;
+  const size = q === 'high' ? 2048 : isTouch ? 512 : 1024;
   if (sun.shadow.mapSize.x !== size) { sun.shadow.mapSize.set(size, size); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; } }
 }
 applyQuality();
@@ -383,7 +387,7 @@ let beacons = [];
 let pods = [], strikes = [], flashes = [], drops = [];
 let generator = null, shake = 0;
 let party = { hp: 1, count: 1, dmg: 1 };                                 // escala invisível pelo número de jogadores na sessão
-const cnt = () => mods.count * party.count;
+const cnt = () => mods.count * party.count * (isTouch ? 0.8 : 1);     // celular: um pouco menos inimigos por vez
 let mods = { hp: 1, count: 1, speed: 1, edmg: 1, elite: 0 };            // dificuldade acumulada pelo sorteio de nível
 let xp = 0, level = 1, xpNeed = 60, pendingLoot = 0, lootRun = null;
 let platoons = [], turrets = [], waypoint = null, opLayout = null, zoneRing = null, plane = null;
@@ -458,9 +462,13 @@ function beep(freq, dur, gain = 0.08) {
 
 // ───────────────────────── Partículas e traçantes ─────────────────────────
 const partGeo = new THREE.BoxGeometry(0.14, 0.14, 0.14);
+const partMats = new Map();
+const partMat = color => partMats.get(color) || (partMats.set(color, new THREE.MeshBasicMaterial({ color })), partMats.get(color));
 function burst(pos, color, n, speed) {
+  if (isTouch) n = Math.ceil(n * 0.5);
+  if (particles.length > (isTouch ? 70 : 220)) return;
   for (let i = 0; i < n; i++) {
-    const m = new THREE.Mesh(partGeo, new THREE.MeshBasicMaterial({ color }));
+    const m = new THREE.Mesh(partGeo, partMat(color));
     m.position.copy(pos);
     scene.add(m);
     particles.push({
@@ -469,9 +477,10 @@ function burst(pos, color, n, speed) {
     });
   }
 }
+const tracerMat = new THREE.LineBasicMaterial({ color: 0xffe08a });
 function addTracer(from, to) {
   const geo = new THREE.BufferGeometry().setFromPoints([from, to]);
-  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xffe08a }));
+  const line = new THREE.Line(geo, tracerMat);
   scene.add(line);
   tracers.push({ line, life: 0.06 });
 }
@@ -488,14 +497,19 @@ function animateBots(dt) {
   for (const e of enemies) {
     const bot = e.mesh.userData.bot; if (!bot) continue;
     const p = e.mesh.position;
-    if (camPos.distanceToSquared(p) > 100 * 100) { bot.prev = null; continue; }   // longe: congela a pose
+    const d2c = camPos.distanceToSquared(p);
+    if (d2c > 100 * 100) { bot.prev = null; continue; }   // longe: congela a pose
+    bot.acc = (bot.acc || 0) + dt;
+    const every = d2c > 3600 ? 4 : d2c > 1225 ? 2 : 1;       // perto: todo quadro; médio: a cada 2; longe: a cada 4
+    if (every > 1 && (frameNo + e.id) % every !== 0) continue;
+    const dtAcc = bot.acc; bot.acc = 0;
     let speed = 0;
-    if (bot.prev) speed = Math.hypot(p.x - bot.prev.x, p.z - bot.prev.z) / Math.max(dt, 1e-3); else bot.prev = new THREE.Vector3();
+    if (bot.prev) speed = Math.hypot(p.x - bot.prev.x, p.z - bot.prev.z) / Math.max(dtAcc, 1e-3); else bot.prev = new THREE.Vector3();
     bot.prev.copy(p);
     const near = nearestLive(p), foe = foeOf(e, 42);
     let d = near ? Math.hypot(near.pos.x - p.x, near.pos.z - p.z) : 99;
     if (foe) d = Math.min(d, Math.hypot(foe.mesh.position.x - p.x, foe.mesh.position.z - p.z));
-    animateBot(bot, { dt, speed: Math.min(speed, 9), engaged: e.t.reach > 0 && d < e.t.reach, aim: e.t.kind === 'gun' && d < 42 ? 1 : 0, charge: e.st === 'charge' });
+    animateBot(bot, { dt: dtAcc, speed: Math.min(speed, 9), engaged: e.t.reach > 0 && d < e.t.reach, aim: e.t.kind === 'gun' && d < 42 ? 1 : 0, charge: e.st === 'charge' });
   }
 }
 let spiderAsset = null, spiderLoadPromise = null;
@@ -541,7 +555,10 @@ function animateSpider(enemy, dt, moving) {
   if (!spider) return;
   if (spider.spitT > 0) spider.spitT = Math.max(0, spider.spitT - dt);
   setSpiderAction(spider, spider.spitT > 0 ? 'Spit' : moving ? 'Walk' : 'Idle');
-  spider.mixer.update(dt);
+  spider.acc = (spider.acc || 0) + dt;
+  const d2c = camPos.distanceToSquared(enemy.mesh.position), every = d2c > 3600 ? 4 : d2c > 1225 ? 2 : 1;
+  if (every > 1 && (frameNo + (enemy.id | 0)) % every !== 0) return;
+  spider.mixer.update(spider.acc); spider.acc = 0;
 }
 let titanAsset = null, titanLoadPromise = null;
 function loadTitan() {
@@ -684,6 +701,7 @@ function damagePlayer(amount) {
   let dmg = amount * (relax ? 0.5 : 1);
   if (buffs.shield > 0) { const ab = Math.min(buffs.shield, dmg); buffs.shield -= ab; dmg -= ab; }
   player.hp -= dmg;
+  buzz(dmg > 20 ? 60 : 25);
   player.lastHit = elapsed;
   const el = $('dmg');
   el.classList.add('on');
@@ -1528,7 +1546,7 @@ function clearWorld() {
   [...enemies].forEach(e => scene.remove(e.mesh));
   enemies = []; platoons = [];
   projectiles.forEach(p => scene.remove(p.m)); projectiles = [];
-  tracers.forEach(t => scene.remove(t.line)); tracers = [];
+  tracers.forEach(t => { scene.remove(t.line); t.line.geometry.dispose(); }); tracers = [];
   particles.forEach(p => scene.remove(p.m)); particles = [];
   crates.forEach(c => scene.remove(c.g)); crates = [];
   beacons.forEach(b => scene.remove(b.g)); beacons = [];
@@ -1604,11 +1622,12 @@ async function startMission(id, levelArg, opts = {}) {
   startBase = { k: 'start', id, faction: curFaction, cell: campaignCell, remote: campaignRemote, sector: campSector, title: mission.title, relax, level: L, biome: curBiome, R: ARENA_R, rocks: rockData, par: mission.par };
   lateSent.clear(); roster.forEach(p => lateSent.add(p.id));
   if (net.role === 'host') net.all({ ...startBase, spawn, lives: mission.lives || 0, mods: [mods.hp, mods.count, mods.speed, mods.edmg, mods.elite] });
-  state = 'playing'; uiOpen = false;
+  state = 'playing'; uiOpen = false; keepAwake(true);
   say(id === 'operation' ? 'Siga até o gerador. Cuidado com os pelotões.' : 'Boa sorte, soldado.', 3);
   captureInput();
 }
 function resetLocalPlayer() {
+  hudLast.clear();
   $('kills').textContent = 'Abates: 0';
   player.ammo = WEAPONS.map(w => ({ mag: w.mag, reserve: Math.min(reserveCap(w), Math.round(w.reserve0 + w.reserveMax * 0.05 * lvl('ammo'))) }));
   Object.assign(player, {
@@ -1642,7 +1661,7 @@ function endMission(win) {
   beep(win ? 660 : 180, 0.6, 0.12);
 }
 function finishMission() {
-  state = 'ended'; uiOpen = false;
+  state = 'ended'; uiOpen = false; keepAwake(false);
   document.exitPointerLock();
   $('hud').classList.remove('on'); $('loot').classList.remove('on'); $('clickGo').classList.remove('on');
   playerGroup.visible = true; $('fade').style.opacity = 0;
@@ -2298,6 +2317,8 @@ function renderHome() {
       <div class="home-facs"><span class="bugs">INSETOS</span><span class="bots">ROBÔS</span></div></div></div>`;
   $('pane-home').querySelectorAll('[data-go]').forEach(b => { b.onclick = () => showTab(b.dataset.go); });
 }
+let installEvt = null;
+addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; if ($('pane-settings')) renderSettings(); });
 function renderSettings() {
   const seg = (key, opts) => `<div class="seg" data-key="${key}">${opts.map(([v, l]) => `<button data-v="${v}" class="${String(settings[key]) === String(v) ? 'on' : ''}">${l}</button>`).join('')}</div>`;
   $('pane-settings').innerHTML = `<h2 class="sec">Configurações</h2>
@@ -2306,6 +2327,8 @@ function renderSettings() {
       <div class="set-row"><div><b>Sensibilidade da mira</b><small>${isTouch ? 'Arrastar o dedo na tela' : 'Movimento do mouse'}</small></div><div class="set-ctl"><input type="range" id="setSens" min="0.4" max="2.5" step="0.05" value="${settings.sens}"><em id="setSensV">${settings.sens.toFixed(2)}×</em></div></div>
       <div class="set-row"><div><b>Qualidade gráfica</b><small>Baixa desliga as sombras (mais fluidez em celulares)</small></div>${seg('quality', [['high', 'Alta'], ['medium', 'Média'], ['low', 'Baixa']])}</div>
       <div class="set-row"><div><b>Tipo de controle</b><small>Automático detecta celular e tablet. Mudar recarrega a página.</small></div>${seg('input', [['auto', 'Automático'], ['pc', 'Teclado e mouse'], ['touch', 'Toque']])}</div>
+      ${isTouch ? `<div class="set-row"><div><b>Vibração</b><small>Ao levar dano</small></div>${seg('vibration', [['true', 'Ligada'], ['false', 'Desligada']])}</div>` : ''}
+      ${installEvt ? '<div class="set-row"><div><b>Instalar como app</b><small>Ícone na tela inicial, sem barras do navegador</small></div><div class="set-ctl"><button class="btn primary" id="setInstall">Instalar</button></div></div>' : ''}
       <div class="set-row"><div><b>Tela cheia</b><small>Melhor para jogar</small></div><div class="set-ctl"><button class="btn" id="setFs">Alternar tela cheia</button></div></div>
       <div class="set-row"><div><b>Restaurar padrões</b><small>Não apaga créditos, melhorias nem recordes</small></div><div class="set-ctl"><button class="btn ghost" id="setReset">Restaurar</button></div></div>
     </div>`;
@@ -2314,13 +2337,14 @@ function renderSettings() {
   vol.onchange = () => { ensureAudio(); beep(660, 0.12, 0.1); };
   sens.oninput = () => { settings.sens = +sens.value; $('setSensV').textContent = `${settings.sens.toFixed(2)}×`; saveSettings(); };
   document.querySelectorAll('#pane-settings .seg').forEach(g => g.querySelectorAll('button').forEach(b => b.onclick = () => {
-    const key = g.dataset.key; settings[key] = b.dataset.v; saveSettings();
+    const key = g.dataset.key; settings[key] = key === 'vibration' ? b.dataset.v === 'true' : b.dataset.v; saveSettings(); if (key === 'vibration' && settings.vibration) buzz(40);
     g.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
     if (key === 'quality') applyQuality();
     if (key === 'input') location.reload();
   }));
+  if ($('setInstall')) $('setInstall').onclick = async () => { try { installEvt.prompt(); await installEvt.userChoice; } catch { /* ok */ } installEvt = null; renderSettings(); };
   $('setFs').onclick = () => { try { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen(); } catch { /* sem suporte */ } };
-  $('setReset').onclick = () => { Object.assign(settings, { volume: 0.8, sens: 1, quality: coarse ? 'medium' : 'high' }); saveSettings(); applyQuality(); if (master) master.gain.value = settings.volume; renderSettings(); };
+  $('setReset').onclick = () => { Object.assign(settings, { volume: 0.8, sens: 1, quality: coarse ? 'low' : 'high', vibration: true }); saveSettings(); applyQuality(); if (master) master.gain.value = settings.volume; renderSettings(); };
 }
 function renderOps() {
   const m = MISSIONS.find(x => x.id === selMission);
@@ -2585,6 +2609,27 @@ addEventListener('mousemove', e => {
 });
 // No PC o "foco" do jogo é o ponteiro preso; no celular não existe: a pausa vira um botão na tela.
 const inputLive = () => isTouch ? (state === 'playing' && !uiOpen) : document.pointerLockElement === renderer.domElement;
+// Tela cheia no primeiro toque, trava de orientação, tela sempre ligada e vibração (celular)
+let fsTries = 0;
+function goFullscreen() {
+  if (!isTouch || document.fullscreenElement || fsTries >= 4 || matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches) return;
+  fsTries++;
+  try { const p = document.documentElement.requestFullscreen && document.documentElement.requestFullscreen({ navigationUI: 'hide' }); p && p.catch && p.catch(() => {}); } catch { /* ok */ }
+  try { const q = screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape'); q && q.catch && q.catch(() => {}); } catch { /* ok */ }
+}
+if (isTouch) document.addEventListener('pointerdown', goFullscreen, true);
+let wakeLock = null;
+async function keepAwake(on) {
+  try {
+    if (!on) { if (wakeLock) { await wakeLock.release(); wakeLock = null; } return; }
+    if (navigator.wakeLock && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); }
+  } catch { /* sem suporte ou negado */ }
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden && (state === 'playing' || state === 'loot')) keepAwake(true); });
+const buzz = ms => { if (isTouch && settings.vibration && navigator.vibrate) try { navigator.vibrate(ms); } catch { /* ok */ } };
+// botão Voltar do Android: pausa em vez de sair do jogo
+history.replaceState({ mp: 1 }, ''); history.pushState({ mp: 2 }, '');
+addEventListener('popstate', () => { history.pushState({ mp: 2 }, ''); if (isTouch && state === 'playing' && !uiOpen) lockChanged(false); });
 function captureInput() {
   if (isTouch) lockChanged(true); else renderer.domElement.requestPointerLock();
 }
@@ -3144,7 +3189,7 @@ function updateEffects(dt) {
   }
   for (const t of [...tracers]) {
     t.life -= dt;
-    if (t.life <= 0) { scene.remove(t.line); tracers.splice(tracers.indexOf(t), 1); }
+    if (t.life <= 0) { scene.remove(t.line); t.line.geometry.dispose(); tracers.splice(tracers.indexOf(t), 1); }
   }
   for (const c of [...crates]) {
     if (!c.landed) {
@@ -3217,35 +3262,39 @@ function updateEffects(dt) {
   if (msgTimer > 0) { msgTimer -= dt; if (msgTimer <= 0) $('msg').classList.remove('on'); }
 }
 
+const hudLast = new Map();
+function hudSet(id, prop, val) {                           // evita reescrever o DOM todo quadro (muito caro em celular)
+  const k = id + '|' + prop; if (hudLast.get(k) === val) return; hudLast.set(k, val);
+  const el = $(id); if (prop === 'text') el.textContent = val; else if (prop === 'html') el.innerHTML = val; else el.style[prop] = val;
+}
 function updateHud() {
   const pct = Math.max(0, player.hp) / maxHp() * 100;
-  $('hpBar').style.width = pct + '%';
-  $('hpBar').style.background = pct > 50 ? '#4cd68a' : pct > 25 ? '#ffcf3f' : '#ff4d4d';
-  $('wname').textContent = `[${player.weapon + 1}] ${curW().name}`;
-  $('ammo').innerHTML = (player.reloading > 0 ? 'Recarregando' : player.mag) + ` <small>/ ${player.reserve}</small>`;
-  $('oText').textContent = state === 'downed' ? 'Você caiu. Aguarde um aliado ou o fim da operação.' : FT(mission.text);
-  $('oBar').style.width = Math.min(100, mission.progress * 100) + '%';
+  hudSet('hpBar', 'width', pct.toFixed(1) + '%');
+  hudSet('hpBar', 'background', pct > 50 ? '#4cd68a' : pct > 25 ? '#ffcf3f' : '#ff4d4d');
+  hudSet('wname', 'text', `[${player.weapon + 1}] ${curW().name}`);
+  hudSet('ammo', 'html', (player.reloading > 0 ? 'Recarregando' : player.mag) + ` <small>/ ${player.reserve}</small>`);
+  hudSet('oText', 'text', state === 'downed' ? 'Você caiu. Aguarde um aliado ou o fim da operação.' : FT(mission.text));
+  hudSet('oBar', 'width', Math.min(100, mission.progress * 100).toFixed(1) + '%');
   const sup = player.supplyCd > 0 ? `${Math.ceil(player.supplyCd)}s` : 'pronto';
   const orb = player.strikeCd > 0 ? `${Math.ceil(player.strikeCd)}s` : 'pronto';
-  $('cd').textContent = isTouch ? `Suprimentos: ${sup} · Orbital: ${orb}` : `Suprimentos (E): ${sup} · Orbital (Q): ${orb}`;
-  if (mission.id === 'queen' && mission.boss) $('bossBar').style.width = Math.max(0, mission.boss.hp / mission.boss.maxHp * 100) + '%';
+  hudSet('cd', 'text', isTouch ? `Suprimentos: ${sup} · Orbital: ${orb}` : `Suprimentos (E): ${sup} · Orbital (Q): ${orb}`);
+  if (mission.id === 'queen' && mission.boss) hudSet('bossBar', 'width', Math.max(0, mission.boss.hp / mission.boss.maxHp * 100).toFixed(1) + '%');
   else if (mission.id !== 'queen') {
     const tb = mission.boss && mission.boss.titan ? mission.boss : null;
-    $('boss').style.display = tb ? 'block' : 'none';
-    if (tb) { $('bossName').textContent = 'TITÃ ÁCIDO'; $('bossBar').style.width = Math.max(0, tb.hp / tb.maxHp * 100) + '%'; }
+    hudSet('boss', 'display', tb ? 'block' : 'none');
+    if (tb) { hudSet('bossName', 'text', 'TITÃ ÁCIDO'); hudSet('bossBar', 'width', Math.max(0, tb.hp / tb.maxHp * 100).toFixed(1) + '%'); }
   }
-  $('xpBar').style.width = Math.min(100, xp / xpNeed * 100) + '%';
-  $('lvl').textContent = `NV ${level} · XP ${Math.floor(xp)} / ${xpNeed}`;
-  $('kills').textContent = 'Abates: ' + kills;
-  $('lives').innerHTML = mission.lives ? 'REFORÇOS ' + [...Array(mission.lives)].map((_, i) => `<span class="${i < mission.livesLeft ? 'on' : ''}">●</span>`).join(' ') : '';
-  const wp = $('wp');
+  hudSet('xpBar', 'width', Math.min(100, xp / xpNeed * 100).toFixed(1) + '%');
+  hudSet('lvl', 'text', `NV ${level} · XP ${Math.floor(xp)} / ${xpNeed}`);
+  hudSet('kills', 'text', 'Abates: ' + kills);
+  hudSet('lives', 'html', mission.lives ? 'REFORÇOS ' + [...Array(mission.lives)].map((_, i) => `<span class="${i < mission.livesLeft ? 'on' : ''}">●</span>`).join(' ') : '');
   const wd = waypoint ? Math.hypot(waypoint.x - player.pos.x, waypoint.z - player.pos.z) : 0;
   if (waypoint && !(waypointHide && wd < waypointHide)) {
     const dx = waypoint.x - player.pos.x, dz = waypoint.z - player.pos.z;
-    wp.style.display = 'block';
-    $('arrow').style.transform = `rotate(${-(Math.atan2(-dx, -dz) - player.yaw)}rad)`;
-    $('wpText').textContent = `${Math.round(wd)} m`;
-  } else wp.style.display = 'none';
+    hudSet('wp', 'display', 'block');
+    hudSet('arrow', 'transform', `rotate(${(-(Math.atan2(-dx, -dz) - player.yaw)).toFixed(2)}rad)`);
+    hudSet('wpText', 'text', `${Math.round(wd)} m`);
+  } else hudSet('wp', 'display', 'none');
 }
 
 
@@ -3563,7 +3612,7 @@ async function clientStartMission(d) {
   state = 'playing'; uiOpen = true;
   if (isTouch) captureInput();
   else $('clickGo').classList.add('on');                    // o navegador exige um clique para capturar o mouse
-  say('Operação iniciada!', 3);
+  say('Operação iniciada!', 3); keepAwake(true);
 }
 
 // ── barra de equipe e lobby ──
@@ -3656,6 +3705,7 @@ function renderCodeRooms(el) {
 // atualização só aparece para quem está no menu principal; quem está jogando (ou pausado no jogo) nunca é interrompido.
 const loadedVersion = (document.querySelector('meta[name="app-version"]') || {}).content || '';
 net.version = loadedVersion === '__VERSION__' ? '' : loadedVersion;
+if ('serviceWorker' in navigator && net.version && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) navigator.serviceWorker.register('/sw.js?v=' + net.version).catch(() => {});
 let newVersion = null, updDismissedAt = 0;
 async function checkVersion() {
   if (!net.version) return;                                   // aberto fora do servidor (arquivo local): nada a validar
@@ -3683,9 +3733,21 @@ setTimeout(checkVersion, 3000);
 // ───────────────────────── Loop ─────────────────────────
 let lastFrame = performance.now();
 let cursorOn = null;
+let ftEma = 16.7, adaptT = 0;
+function adaptRes(ms) {                                    // celular: se os quadros demoram, baixa a resolução aos poucos; se sobra folga, sobe de volta
+  ftEma += (ms - ftEma) * 0.06; adaptT += ms;
+  if (adaptT < 1500 || state !== 'playing') return;
+  adaptT = 0;
+  if (ftEma > 24 && resScale > 0.55) { resScale = Math.max(0.55, resScale - 0.12); setRes(); }
+  else if (ftEma < 17.5 && resScale < 1) { resScale = Math.min(1, resScale + 0.06); setRes(); }
+}
+let frameNo = 0;
 function loop() {
   requestAnimationFrame(loop);
-  const now = performance.now(); tick(Math.min(0.05, (now - lastFrame) / 1000)); lastFrame = now;
+  const now = performance.now();
+  if (isTouch && now - lastFrame < 14) return;             // telas de 90/120 Hz: 60 quadros bastam e poupam bateria e calor
+  if (isTouch) adaptRes(now - lastFrame);
+  frameNo++; tick(Math.min(0.05, (now - lastFrame) / 1000)); lastFrame = now;
   const want = !isTouch && (state === 'menu' || state === 'paused' || state === 'ended');
   if (want !== cursorOn) { cursorOn = want; window.__cursor && window.__cursor.show(want); }
   renderer.render(scene, camera);
@@ -3762,7 +3824,7 @@ loop();
 
 // Gancho para testes automatizados e futuro multiplayer (estado serializável)
 window.__freedivers = window.__multipunk = {
-  get save() { return save; }, loadTitan, WLOC, WNET, WMAP, GEO, CHAT: () => CHAT, AUTH, WL, FR: () => FR, campaignResult, campMinLevel, attackable, cellMission, missionUnlocked, get party() { return party; }, toast,
+  get save() { return save; }, get renderer() { return renderer; }, get scene() { return scene; }, get camera() { return camera; }, loadTitan, WLOC, WNET, WMAP, GEO, CHAT: () => CHAT, AUTH, WL, FR: () => FR, campaignResult, campMinLevel, attackable, cellMission, missionUnlocked, get party() { return party; }, toast,
   player, keys, tick, startMission, setFaction, settings, get curFaction() { return curFaction; }, loadBots, botsReady,
   get enemies() { return enemies; }, get state() { return state; }, get kills() { return kills; },
   get mission() { return mission; }, setMouse(v) { mouseDown = v; },

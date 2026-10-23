@@ -8,6 +8,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#07090c">
 <title>Multipunk</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/assets/icons/icon-192.png">
 <style>
   :root {
     --bg: #07090c; --panel: #10151cee; --panel2: #161d27; --line: #2b3644; --line2: #3b4a5d;
@@ -61,8 +63,8 @@
   #mods div.up { border-color: var(--blue); }
   #msg { position: absolute; top: 26%; width: 100%; text-align: center; font-size: 26px; font-weight: 700; color: var(--accent); text-shadow: 0 2px 8px #000; opacity: 0; transition: opacity .4s; letter-spacing: 1px; }
   #msg.on { opacity: 1; }
-  #dmg { position: absolute; inset: 0; box-shadow: inset 0 0 160px 40px #ff000000; transition: box-shadow .25s; }
-  #dmg.on { box-shadow: inset 0 0 160px 40px #ff000099; }
+  #dmg { position: absolute; inset: 0; background: radial-gradient(ellipse at center, #ff000000 45%, #ff0000aa 100%); opacity: 0; transition: opacity .25s; }
+  #dmg.on { opacity: 1; }
   #fade { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none; transition: opacity 1s; z-index: 50; }
 
   /* ───────── Sorteio de nível ───────── */
@@ -405,6 +407,15 @@
   .up { color: var(--ok); } .dn { color: var(--danger); }
   .stage { padding: 1px 7px; border: 1px solid; font-family: var(--mono); font-size: 10px; letter-spacing: 1px; }
   .st-disputa { color: #ff9a5a; border-color: #ff9a5a; } .st-dominado { color: var(--blue); border-color: var(--blue); } .st-fixo { color: var(--ok); border-color: var(--ok); }
+  /* ───────── Celular: tudo mais leve para a GPU ───────── */
+  body.touch .tb { backdrop-filter: none; -webkit-backdrop-filter: none; }
+  body.touch #menu::before { display: none; }
+  body.touch * { text-shadow: none !important; }
+  body.touch #msg, body.touch #objective, body.touch #sectorLine { text-shadow: 0 1px 3px #000 !important; }
+  body.touch .btn, body.touch .tab { transition: none; }
+  body.touch .pane.on { animation: none; }
+  body.touch.ingame { touch-action: none; }
+  @media (display-mode: standalone), (display-mode: fullscreen) { html, body { overscroll-behavior: none; } }
 </style>
 </head>
 <body>

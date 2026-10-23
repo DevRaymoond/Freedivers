@@ -22,3 +22,10 @@
 - Menu renomeado: **Novo jogo → Mapa** e **Modo online → Comunicações**; o mundo online virou a aba *Mundo online* dentro de Mapa (sem login só mostra; com login ataca e joga em esquadrão).
 - Estágios do setor (disputa, dominado, fixo), missões de erradicar e defender, setor atrás de território humano fora do alcance dos inimigos; setor fixo resiste ao avanço inimigo.
 - Guerra mais dinâmica (passo a cada minuto, vários ataques por facção, fronteiras entre insetos e robôs) e interface com duas barras (luta entre as facções + avanço humano) e brilho nos setores que mudaram. `tools/test_world.js` cobre as regras.
+
+## 2026-10-23 (celular: desempenho e experiência de app)
+- Desempenho: sem antialias e resolução 1× no toque; qualidade inicial **Baixa** em celulares; resolução se ajusta sozinha (0,55–1×) conforme o tempo dos quadros; limite de 60 quadros/s; sombras 512 px, alcance de visão e névoa menores; ~20% menos inimigos por vez.
+- HUD só escreve no DOM quando o valor muda; partículas com materiais compartilhados e teto de quantidade; traçantes liberam a geometria (vazamento de GPU corrigido); animação de esqueleto de aranha e robôs mais espaçada com a distância.
+- CSS leve no toque: sem desfoque de fundo, sem linhas de varredura do menu e sem sombras de texto; flash de dano por opacidade.
+- Experiência Android: PWA (`manifest.webmanifest`, ícones em `assets/icons/`, `sw.js` com cache dos modelos e bibliotecas, botão **Instalar como app** em Configurações), tela cheia + orientação horizontal no primeiro toque, tela sempre ligada durante a missão, vibração ao levar dano (configurável) e botão Voltar do Android pausa o jogo.
+- `tools/make_icons.py` gera os ícones; servidor libera `/sw.js` e `/manifest.webmanifest`.

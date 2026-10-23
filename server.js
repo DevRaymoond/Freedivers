@@ -27,9 +27,9 @@ const MAX_PLAYERS = 4;
 // ───────────── arquivos estáticos (lista permitida: nada de node_modules, .git, server.js, .env…) ─────────────
 const types = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css',
-  '.png': 'image/png', '.json': 'application/json', '.glb': 'model/gltf-binary', '.ico': 'image/x-icon', '.webp': 'image/webp', '.jpg': 'image/jpeg',
+  '.png': 'image/png', '.json': 'application/json', '.glb': 'model/gltf-binary', '.ico': 'image/x-icon', '.webp': 'image/webp', '.jpg': 'image/jpeg', '.webmanifest': 'application/manifest+json',
 };
-const allowed = p => /^\/(index\.html|main\.js|net\.js|cursor\.js|bots\.js|worldlogic\.mjs|favicon\.ico)$/.test(p) || /^\/(lib|assets)\/[\w./-]+$/.test(p) || (DEV && /^\/tools\/[\w./-]+$/.test(p));
+const allowed = p => /^\/(index\.html|main\.js|net\.js|cursor\.js|bots\.js|worldlogic\.mjs|favicon\.ico|sw\.js|manifest\.webmanifest)$/.test(p) || /^\/(lib|assets)\/[\w./-]+$/.test(p) || (DEV && /^\/tools\/[\w./-]+$/.test(p));
 const gzCache = new Map();
 const SEC_HEADERS = {
   'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer',
