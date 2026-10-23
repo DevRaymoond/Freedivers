@@ -50,7 +50,7 @@ const UPGRADES = [
 const UPG_MAX = 10;
 const upgCost = l => 500 + 250 * l;
 function loadSave() {
-  try { return Object.assign({ credits: 0, upg: {}, best: {}, name: '' }, JSON.parse(localStorage.getItem('multipunk_save') || localStorage.getItem('freedivers_save') || '{}')); }
+  try { return Object.assign({ credits: 0, upg: {}, best: {}, name: '', levels: {} }, JSON.parse(localStorage.getItem('multipunk_save') || localStorage.getItem('freedivers_save') || '{}')); }
   catch { return { credits: 0, upg: {}, best: {} }; }
 }
 let save = loadSave();
@@ -64,6 +64,20 @@ const FIB = [0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89];
 const fib = n => FIB[Math.min(Math.max(0, n), FIB.length - 1)];
 const fibHp = n => 1 + 0.04 * fib(n), fibDm = n => 1 + 0.025 * fib(n);
 let curMix = { spit: 0.22, bomb: 0.10, chrg: 0.07 };
+// Nível de ameaça escolhido para cada fase (1 = modo relax). Multiplica a base da fase.
+const LEVEL_MAX = 20;
+function levelScale(L) {
+  const k = L - 1;
+  return { hp: 1 + 0.2 * k, dmg: 1 + 0.12 * k, speed: 1 + 0.015 * k, count: 1 + 0.06 * k, elite: 0.015 * k, mix: 1 + 0.08 * k, reward: 1 + 0.1 * k };
+}
+function effective(def, L) {
+  const b = def.base, s = levelScale(L);
+  return {
+    hp: b.hp * s.hp, dmg: b.dmg * s.dmg, speed: b.speed * s.speed, count: b.count * s.count, elite: Math.min(0.6, b.elite + s.elite),
+    mix: { spit: Math.min(0.5, def.mix.spit * s.mix), bomb: Math.min(0.3, def.mix.bomb * s.mix), chrg: Math.min(0.3, def.mix.chrg * s.mix) },
+  };
+}
+const missionLevel = id => Math.min(LEVEL_MAX, Math.max(1, (save.levels && save.levels[id]) || 1));
 const XP_VALUES = { crawler: 6, spitter: 10, bomber: 12, charger: 26, brute: 60, queen: 400 };
 
 // ───────────────────────── Cena ─────────────────────────
@@ -1343,11 +1357,11 @@ function clearWorld() {
   playerGroup.visible = true; $('fade').style.opacity = 0;
 }
 
-function startMission(id) {
+function startMission(id, levelArg) {
   if (net.role === 'client') return;
   ensureAudio();
-  const tier = Math.max(1, MISSIONS.findIndex(m => m.id === id) + 1);
-  relax = tier === 1;                                    // modo relax só no nível 1
+  const L = Math.min(LEVEL_MAX, Math.max(1, Math.round(levelArg || missionLevel(id))));
+  relax = L === 1;                                       // modo relax só no nível 1
   clearWorld();
   const def = MISSIONS.find(m => m.id === id);
   applyBiome(def ? def.biome : 'desert');
@@ -1362,9 +1376,9 @@ function startMission(id) {
   elapsed = 0;
   spawnTimer = 1;
   shake = 0;
-  const B = def && def.base ? def.base : { hp: 1, dmg: 1, speed: 1, count: 1, elite: 0 };
-  curMix = def && def.mix ? def.mix : { spit: 0.22, bomb: 0.1, chrg: 0.07 };
-  mods = { hp: B.hp, count: B.count, speed: B.speed, edmg: B.dmg, elite: B.elite };
+  const E = effective(def, L);
+  curMix = E.mix;
+  mods = { hp: E.hp, count: E.count, speed: E.speed, edmg: E.dmg, elite: E.elite };
   xp = 0; level = 1; xpNeed = 60; pendingLoot = 0; buffs = { dmg: 0, shield: 0 };
   stats = { shots: 0, hits: 0, supplies: 0, orbitals: 0, deaths: 0 };
   resetLocalPlayer();
@@ -1380,12 +1394,12 @@ function startMission(id) {
   checkpoint.copy(base);
   mission = buildMission(id);
   mission.par = def ? def.par : 4;
-  mission.tier = tier;
+  mission.level = L;
   mission.livesLeft = mission.lives || 0;
   afterMissionBuilt(id);
   if (net.role === 'host') {
     net.lock(true);
-    net.all({ k: 'start', id, title: mission.title, relax, tier, biome: def ? def.biome : 'desert', R: ARENA_R, rocks: rockData,
+    net.all({ k: 'start', id, title: mission.title, relax, level: L, biome: def ? def.biome : 'desert', R: ARENA_R, rocks: rockData,
               spawn, lives: mission.lives || 0, par: mission.par, mods: [mods.hp, mods.count, mods.speed, mods.edmg, mods.elite] });
   }
   state = 'playing'; uiOpen = false;
@@ -1403,7 +1417,7 @@ function resetLocalPlayer() {
 }
 function afterMissionBuilt(id) {
   setNameTag(playerGroup, myName());
-  $('oTitle').textContent = mission.title;
+  $('oTitle').textContent = `${mission.title} · NV ${mission.level}`;
   $('boss').style.display = id === 'queen' ? 'block' : 'none';
   $('bossName').textContent = 'RAINHA DA COLMEIA';
   $('hud').classList.add('on');
@@ -1459,6 +1473,7 @@ function computeScore(win, S = teamStats()) {
   const acc = S.shots ? S.hits / S.shots : 0;
   add(`Precisão (${Math.round(acc * 100)}% de ${S.shots} disparos)`, 60 * acc);
   add(`Nível alcançado (${level})`, (level - 1) * 3);
+  if ((mission.level || 1) > 1) add(`Nível de ameaça (${mission.level})`, 4 * (mission.level - 1));
   if (S.deaths) add(`Mortes (${S.deaths})`, -25 * S.deaths);
   if (S.supplies) add(`Suprimentos usados (${S.supplies})`, -6 * S.supplies);
   if (S.orbitals) add(`Orbitais usados (${S.orbitals})`, -10 * S.orbitals);
@@ -1468,9 +1483,9 @@ function computeScore(win, S = teamStats()) {
 const rankOf = t => t >= 330 ? 'S' : t >= 270 ? 'A' : t >= 210 ? 'B' : t >= 140 ? 'C' : 'D';
 function buildResults(win) {
   const { rows, total } = computeScore(win);
-  return { win, mid: mission.id, title: mission.title, rows, total };
+  return { win, mid: mission.id, title: `${mission.title} · NV ${mission.level || 1}`, rows, total };
 }
-const creditFor = (id, win, total) => Math.round(total * 1.2 + (net.role === 'solo' ? kills : (killsBy[id] || 0)) * 0.5 + (win ? 40 : 0));
+const creditFor = (id, win, total) => Math.round((total * 1.2 + (net.role === 'solo' ? kills : (killsBy[id] || 0)) * 0.5 + (win ? 40 : 0)) * levelScale(mission.level || 1).reward);
 function presentResults(r) {
   save.credits += r.credits;
   const prev = save.best[r.mid];
@@ -1498,38 +1513,64 @@ const ENEMY_INFO = [
   ['Investidor', 'Avisa e investe em linha reta. Desvie com o dash.'], ['Rainha', 'Chefe da colmeia: rajadas, golpes e invocações.'],
 ];
 
+function levelPreview(m, L) {
+  const E = effective(m, L), pct = v => `×${v.toFixed(2)}`;
+  return `<div><small>VIDA DOS INIMIGOS</small><b>${pct(E.hp)}</b></div><div><small>ATAQUE</small><b>${pct(E.dmg)}</b></div>
+          <div><small>QUANTIDADE</small><b>${pct(E.count)}</b></div><div><small>ELITES</small><b>${Math.round(E.elite * 100)}%</b></div>
+          <div><small>RECOMPENSA</small><b>${pct(levelScale(L).reward)}</b></div>`;
+}
+const levelTag = v => v === 1 ? 'RELAX' : v >= 15 ? 'EXTREMO' : v >= 8 ? 'DIFÍCIL' : 'NORMAL';
 function renderOps() {
   const m = MISSIONS.find(x => x.id === selMission);
   const best = save.best[m.id];
+  const L = missionLevel(m.id), canPick = net.role !== 'client';
   const danger = '■'.repeat(m.danger) + '□'.repeat(5 - m.danger);
   $('pane-ops').innerHTML = `
     <h2 class="sec">Selecionar operação${net.role !== 'solo' ? ` · SALA ${net.code} · ${net.roster.length} jogador(es)` : ''}</h2>
     <div class="ops">
       <div class="op-list">${MISSIONS.map((x, i) => `
         <button class="op-item ${x.id === selMission ? 'on' : ''}" data-id="${x.id}">
-          <i>${String(i + 1).padStart(2, '0')} · ${x.tag}</i><span>${save.best[x.id] != null ? 'MELHOR ' + save.best[x.id] : ''}</span>
+          <i>${String(i + 1).padStart(2, '0')} · ${x.tag} · NV ${missionLevel(x.id)}</i><span>${save.best[x.id] != null ? 'MELHOR ' + save.best[x.id] : ''}</span>
           <b>${x.title}</b></button>`).join('')}</div>
       <div class="op-detail">
         <div class="op-banner" style="background:${BIOME_CSS[m.biome]}"><div class="tagrow">
-          <span class="tag">${BIOME_NAME[m.biome]}</span><span class="tag hot">PERIGO ${danger}</span><span class="tag ok">${m.tag}</span><span class="tag">NÍVEL ${MISSIONS.indexOf(m) + 1}${MISSIONS.indexOf(m) === 0 ? ' · RELAX' : ''}</span></div></div>
+          <span class="tag">${BIOME_NAME[m.biome]}</span><span class="tag hot">PERIGO ${danger}</span><span class="tag ok">${m.tag}</span></div></div>
         <div class="op-body">
           <h3>${m.title}</h3>
           <p>${m.desc}</p>
           <div class="phases">${m.phases.map((p, i) => `<span>${i + 1}. ${p}</span>`).join('')}</div>
+          <div class="lvl">
+            <div class="lvl-head"><small>NÍVEL DE AMEAÇA DESTA FASE</small><b id="lvNum">${L}</b><i id="lvTag">${levelTag(L)}</i></div>
+            <div class="lvl-ctl">
+              <button class="btn" id="lvDn" ${canPick ? '' : 'disabled'}>−</button>
+              <input type="range" id="lvRange" min="1" max="${LEVEL_MAX}" value="${L}" ${canPick ? '' : 'disabled'}>
+              <button class="btn" id="lvUp" ${canPick ? '' : 'disabled'}>+</button>
+            </div>
+            <div class="stats-row" id="lvStats">${levelPreview(m, L)}</div>
+            ${canPick ? '' : '<small style="color:var(--dim)">Só o host escolhe o nível da operação.</small>'}
+          </div>
           <div class="stats-row">
             <div><small>MELHOR PONTUAÇÃO</small><b>${best != null ? best : '—'}</b></div>
             <div><small>RANK</small><b>${best != null ? rankOf(best) : '—'}</b></div>
             <div><small>TEMPO-META</small><b>${Math.round(m.par * 0.75)} min</b></div>
-            <div><small>VIDA BASE</small><b>×${m.base.hp.toFixed(2)}</b></div>
-            <div><small>ATAQUE BASE</small><b>×${m.base.dmg.toFixed(2)}</b></div>
           </div>
           <div class="op-foot"><button class="btn primary" id="deploy" ${net.role === 'client' || missionBusy() ? 'disabled' : ''}>${net.role === 'client' ? 'Aguardando o host' : 'Iniciar operação'}</button>
-            <span style="color:var(--dim);font-size:12px">Pontos pela velocidade, abates, precisão, mortes, suprimentos e orbitais.</span></div>
+            <span style="color:var(--dim);font-size:12px">Nível 1 é o modo relax. Níveis maiores dão mais pontos e créditos.</span></div>
         </div>
       </div>
     </div>`;
   document.querySelectorAll('.op-item').forEach(b => b.onclick = () => { selMission = b.dataset.id; renderOps(); });
-  $('deploy').onclick = () => startMission(selMission);
+  const setLevel = v => {
+    v = Math.min(LEVEL_MAX, Math.max(1, v));
+    save.levels = save.levels || {}; save.levels[m.id] = v; persist();
+    $('lvRange').value = v; $('lvNum').textContent = v; $('lvTag').textContent = levelTag(v);
+    $('lvStats').innerHTML = levelPreview(m, v);
+    document.querySelectorAll('.op-item.on i').forEach(i => { i.textContent = i.textContent.replace(/NV \d+/, 'NV ' + v); });
+  };
+  $('lvRange').oninput = e => setLevel(+e.target.value);
+  $('lvDn').onclick = () => setLevel(missionLevel(m.id) - 1);
+  $('lvUp').onclick = () => setLevel(missionLevel(m.id) + 1);
+  $('deploy').onclick = () => startMission(selMission, missionLevel(selMission));
 }
 function renderArsenal() {
   const maxOf = k => Math.max(...WEAPONS.map(w => k(w)));
@@ -2270,7 +2311,7 @@ function applySnapshot(d) {
   mission.boss = h.bs ? { hp: h.bs[0], maxHp: h.bs[1] } : null;
   if (h.wp) { waypoint = waypoint || new THREE.Vector3(); waypoint.set(h.wp[0], 0, h.wp[1]); waypointHide = h.wp[2]; } else waypoint = null;
   [mods.hp, mods.count, mods.speed, mods.edmg, mods.elite] = h.md;
-  $('oTitle').textContent = mission.title;
+  $('oTitle').textContent = `${mission.title} · NV ${mission.level}`;
 
   const ob = d.ob;
   if (ob.gen) {
@@ -2385,7 +2426,7 @@ function clientStartMission(d) {
   xp = 0; level = 1; xpNeed = 60; pendingLoot = 0; buffs = { dmg: 0, shield: 0 };
   stats = { shots: 0, hits: 0, supplies: 0, orbitals: 0, deaths: 0 };
   resetLocalPlayer();
-  mission = { id: d.id, title: d.title, text: '', progress: 0, lives: d.lives, livesLeft: d.lives, par: d.par, tier: d.tier, boss: null, update: null, onKill: null };
+  mission = { id: d.id, title: d.title, text: '', progress: 0, lives: d.lives, livesLeft: d.lives, par: d.par, level: d.level, boss: null, update: null, onKill: null };
   for (const p of net.roster) if (p.id !== net.id) { const o = ensureOther(p.id); o.status = 'alive'; o.seen = 0; o.last = null; o.ev = null; o.bd = false; o.st = {}; o.group.visible = true; resetRig(o.rig); }
   const sp = d.spawn[net.id];
   if (sp) { player.pos.set(sp[0], 0, sp[1]); player.yaw = sp[2]; }

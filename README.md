@@ -39,6 +39,8 @@ PORT=8765 node server.js            # escuta em 0.0.0.0 (use HOST=127.0.0.1 atr�
    (notam proximidade, tiros e explosões e alertam os vizinhos); defende o gerador por 8 ondas; segura a zona de extração (raio 50 m) por 1:30;
    a nave pousa, abre a rampa traseira e todos embarcam.
 2. Limpeza do setor (6 ondas de Fibonacci: 5, 8, 13, 21, 34, 55) · 3. Coleta de amostras · 4. Faróis · 5. Defesa do gerador · 6. Extração sob fogo · 7. Rainha da colmeia
+Cada fase tem um **nível de ameaça de 1 a 20 escolhido por você** na aba OPERAÇÕES (online, quem escolhe é o host); o nível 1 é o modo relax e
+níveis maiores multiplicam vida, ataque, quantidade e elites e também a pontuação e os créditos.
 Cada fase tem a sua base de dificuldade (vida, ataque, velocidade, quantidade, elites e mistura de inimigos; só a primeira é modo relax)
 e, dentro da fase, a vida e o ataque de cada onda crescem pela sequência de Fibonacci (1, 1, 2, 3, 5, 8, 13, 21…).
 
