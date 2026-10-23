@@ -55,7 +55,7 @@ const ENEMY_TYPES = {
   brute:   { hp: 450, speed: 3.6, dmg: 28, radius: 2.0, height: 2.0, scale: 2.4, color: 0x4a3a66 },
   bomber:  { hp: 40, speed: 5.4, dmg: 35, radius: 0.9, height: 0.9, scale: 1, color: 0xb8651f },
   charger: { hp: 150, speed: 4.2, dmg: 32, radius: 1.3, height: 1.1, scale: 2.2, color: 0x56697a },
-  queen:   { hp: 1800, speed: 2.7, dmg: 38, radius: 3.4, height: 3.0, scale: 4.4, color: 0x6a2b6f },
+  queen:   { hp: 1800, speed: 2.2, dmg: 38, radius: 4.2, height: 4.4, scale: 9, color: 0x6a2b6f },     // insetos: o gigante de seis pernas (pisada e jato de ácido), ~4x o jogador
   // Titã ácido: gigante lento; pisa (área) e cospe um jato de ácido (inspirado no Bile Titan). Esfera de acerto no meio do corpo (as pernas são longas).
   titan:   { hp: 2200, speed: 1.7, dmg: 42, radius: 4.2, height: 4.4, scale: 9, color: 0xb59a62 },
 };
@@ -625,7 +625,7 @@ function loadTitan() {
     .catch(err => { console.warn('Titã indisponível:', err); titanLoadPromise = null; return null; });
   return titanLoadPromise;
 }
-function makeTitanMesh() {
+function makeTitanMesh(type = 'titan') {
   const g = new THREE.Group(), model = cloneSkeleton(titanAsset.scene);
   model.rotation.y = Math.PI;                                    // o modelo olha para +Z; os inimigos avançam por -Z
   model.traverse(o => { if (o.isMesh) { o.material = o.material.clone(); o.castShadow = true; o.frustumCulled = false; } });
@@ -633,7 +633,7 @@ function makeTitanMesh() {
   const mixer = new THREE.AnimationMixer(model), actions = {};
   for (const clip of titanAsset.animations) actions[clip.name] = mixer.clipAction(clip);
   actions.Idle.play();
-  g.scale.setScalar(ENEMY_TYPES.titan.scale);
+  g.scale.setScalar(ENEMY_TYPES[type].scale);
   g.userData.titan = { mixer, actions, active: 'Idle' };
   return g;
 }
@@ -651,7 +651,7 @@ function animateTitan(e, dt, moving) {
   T.mixer.update(dt * (T.active === 'Walk' ? 0.9 : 1));
 }
 function makeEnemyMesh(type, fac = curFaction) {
-  if (type === 'titan' && titanAsset) return makeTitanMesh();
+  if ((type === 'titan' || (type === 'queen' && fac !== 'bots')) && titanAsset) return makeTitanMesh(type);
   if (fac === 'bots' && botsReady()) return makeBotMesh(type);
   const t = ENEMY_TYPES[type];
   if (type === 'spitter' && fac !== 'bots' && spiderAsset) return makeSpiderMesh();
@@ -1228,7 +1228,7 @@ function spawnWave(op, n) {
     makePlatoon(c, waveTypes(n, Math.round(total / 3)), { alert: true, wave: n, hpMul, dmMul });
   }
   const brutes = n === 8 ? 2 : (n === 5 || n === 7) ? 1 : 0;
-  if (titanAsset && (mission.level || 1) >= TITAN_MIN_LEVEL && (n === 6 || n === 8) && !(curFaction === 'bots' && !mixFac)) {
+  if (false && titanAsset && (mission.level || 1) >= TITAN_MIN_LEVEL && (n === 6 || n === 8) && !(curFaction === 'bots' && !mixFac)) {
     const ang = rand(0, Math.PI * 2); spawnEnemy('titan', clampArena(new THREE.Vector3(generator.x + Math.cos(ang) * 66, 0, generator.z + Math.sin(ang) * 66)), { wave: n, alert: true, hpMul: 1 + 0.06 * ((mission.level || 1) - TITAN_MIN_LEVEL) });
     sayAll('Um Titã ácido entrou na batalha!', 3.5);
   }
@@ -1589,7 +1589,6 @@ function maybeTitan(dt) {                                   // nível 6+: um Tit
   sayAll('Um Titã ácido se aproxima! Cuidado com a pisada e com o jato.', 4); beep(90, 0.8, 0.15);
 }
 function spawnLogic(dt) {
-  if (mission.id !== 'operation' && mission.id !== 'queen') maybeTitan(dt);
   spawnTimer -= dt;
   const small = enemies.filter(e => e.type !== 'brute' && e.type !== 'queen' && e.type !== 'titan').length;
   if (spawnTimer <= 0 && small < mission.cap) {
@@ -1628,7 +1627,7 @@ let campaignCell = null, campaignRemote = false, curBiome = 'desert', startBase 
 const lateSent = new Set();
 async function startMission(id, levelArg, opts = {}) {
   if (net.role === 'client') return;
-  if ((opts.faction || selFaction) !== 'bots' || opts.mix) { await loadSpider(); await loadCreatures(); if (Math.round(levelArg || 1) >= TITAN_MIN_LEVEL) await loadTitan(); }
+  if ((opts.faction || selFaction) !== 'bots' || opts.mix) { await loadSpider(); await loadCreatures(); if (id === 'queen') await loadTitan(); }
   const mi = MISSIONS.findIndex(m => m.id === id);
   if (!opts.cell && !missionUnlocked(mi)) { say('Fase bloqueada: vença a anterior em nível 3 ou mais.', 3); return; }
   ensureAudio();
@@ -2303,7 +2302,7 @@ const ENEMY_INFO_BOTS = [
 const ENEMY_INFO = [
   ['Rastejador', 'Veloz e frágil. Ataca em bando, corpo a corpo.'], ['Cuspidor', 'Mantém distância e lança bolas de ácido.'],
   ['Bruto', 'Enorme e resistente. Cada golpe dói.'], ['Bombardeiro', 'Corre até você e explode. Atire de longe.'],
-  ['Investidor', 'Avisa e investe em linha reta. Desvie com o dash.'], ['Rainha', 'Chefe da colmeia: rajadas, golpes e invocações.'],
+  ['Investidor', 'Avisa e investe em linha reta. Desvie com o dash.'], ['Rainha', 'Gigante de seis pernas: pisada em área, jato de ácido e convoca o enxame.'],
   ['Titã ácido', 'Gigante lento (nível 6+). Pisa em área e cospe um jato de ácido: mantenha distância e saia da linha do jato.'],
 ];
 
@@ -3169,7 +3168,7 @@ function updateEnemies(dt) {
       } else if (e.st === 'stun') {
         if (e.stT <= 0) { e.st = 'walk'; e.stT = 2.5; }
       }
-    } else if (e.type === 'titan') {
+    } else if (e.type === 'titan' || (e.type === 'queen' && m.userData.titan)) {
       e.stompCd -= dt; e.jetCd -= dt;
       const want = Math.atan2(-dir.x, -dir.z); let dr = want - m.rotation.y; dr = Math.atan2(Math.sin(dr), Math.cos(dr));
       m.rotation.y += Math.max(-0.8 * dt, Math.min(0.8 * dt, dr));              // gira devagar: dá para contornar
@@ -3188,7 +3187,15 @@ function updateEnemies(dt) {
         if (e.stompCd <= 0 && dist < 12 && facing) { e.st = 'stomp'; e.stT = 1.8; e.hitDone = false; }
         else if (e.jetCd <= 0 && dist > 14 && dist < 50 && facing) { e.st = 'jet'; e.stT = 2.4; e.jetAcc = 0; }
       }
-      mission.boss = { hp: e.hp, maxHp: e.maxHp, titan: true };
+      if (e.type === 'titan') mission.boss = { hp: e.hp, maxHp: e.maxHp, titan: true };
+      else {                                                                           // Rainha: chama o enxame de tempos em tempos
+        e.summonCd -= dt;
+        if (e.summonCd <= 0 && enemies.length < 18) {
+          e.summonCd = e.hp < e.maxHp * 0.5 ? 10 : 14;
+          sayAll('A Rainha chama o enxame!', 2);
+          for (let k = 0; k < 4; k++) { const a = rand(0, Math.PI * 2); spawnEnemy(k === 3 ? 'bomber' : 'crawler', m.position.clone().add(new THREE.Vector3(Math.cos(a) * 8, 0, Math.sin(a) * 8))); }
+        }
+      }
     } else if (e.type === 'queen') {
       e.atkCd -= dt; e.volleyCd -= dt; e.summonCd -= dt;
       const enraged = e.hp < e.maxHp * 0.5;
@@ -3659,7 +3666,7 @@ net.onClosed = msg => {
 
 async function clientStartMission(d) {
   ensureAudio();
-  await loadSpider(); if (d.faction !== 'bots' || d.mix) await loadCreatures(); if ((d.level || 1) >= TITAN_MIN_LEVEL && d.faction !== 'bots') await loadTitan();
+  await loadSpider(); if (d.faction !== 'bots' || d.mix) await loadCreatures(); if (d.id === 'queen' && d.faction !== 'bots') await loadTitan();
   if (missionBusy()) { clearWorld(); }
   relax = !!d.relax;
   campaignCell = d.cell || null; campaignRemote = !!d.remote; campSector = d.sector || null; mixFac = null; clientMixed = false;

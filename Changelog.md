@@ -66,3 +66,6 @@
 - **Rastejador** passa a usar o modelo do corredor (`assets/crawler.glb`) e o **investidor** o do empurrador (`assets/pusher.glb`), com rig e marcha de aranha: pernas em duas partes, passos alternados/trípode, corpo de lagarta ondulando (corredor) e ações de combate: `Attack` (investida de cabeça), `Wind` (agacha e treme), `Charge` (corrida baixa) e `Stun` (cabeça baixa). Geração em `tools/build_mob.py`; malhas ~3,7 mil e ~4,7 mil vértices; olhos com material emissivo.
 - Jogo: kit genérico de criaturas rigadas (`makeCreatureMesh`, `animateCreature`), passo sincronizado com a velocidade, animação mais espaçada à distância e escalas ajustadas; modelos de reserva continuam se o arquivo não carregar. Facção robôs não muda.
 - Personagem: camada procedural sobre os clipes (inclina para onde corre, recua ao atirar, recarregar e levar dano), também nos outros jogadores.
+
+## 2026-10-23 (Rainha é o gigante)
+- O gigante de seis pernas (`assets/titan.glb`) passa a ser a **Rainha da colmeia** dos insetos: ~9 m, pisada em área, jato de ácido e convocação do enxame, com a barra de chefe da missão. O Titã ácido deixou de aparecer sozinho nas outras missões e nas ondas da Operação Gerador. Com robôs, o chefe continua sendo o Comandante Mecha.
