@@ -19,6 +19,7 @@ PREV = os.path.join(ROOT, 'tools', 'preview'); os.makedirs(PREV, exist_ok=True)
 CFG = {
     'crawler': dict(src='mA', ratio=0.16, leg_r=0.058, fade=0.07),
     'pusher': dict(src='mB', ratio=0.20, leg_r=0.075, fade=0.07),
+    'bomber': dict(src='bomber', ratio=0.24, leg_r=0.05, fade=0.03),
 }[KIND]
 SRC = glob.glob(os.path.join(ROOT, 'tools', 'source', CFG['src'], '*.fbx'))[0]
 OUT_BLEND = os.path.join(ROOT, 'assets', KIND + '.blend'); OUT_GLB = os.path.join(ROOT, 'assets', KIND + '.glb')
@@ -32,6 +33,8 @@ mesh.name = KIND.capitalize() + 'Mesh'; mesh.data.name = KIND.capitalize() + 'Ge
 bpy.context.view_layer.objects.active = mesh; mesh.select_set(True)
 bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
 mesh.location = (0, 0, 0)
+if KIND == 'bomber':                                 # a formiga vem com a cabeça em +X; o jogo quer -Y
+    mesh.rotation_euler = (0, 0, -math.pi / 2); bpy.ops.object.transform_apply(location=False, rotation=True, scale=False)
 
 # ───────────── 1. malha: redução e faces chapadas ─────────────
 before = len(mesh.data.vertices)
@@ -45,10 +48,12 @@ base_mat = mesh.data.materials[0]; base_mat.name = KIND + ' | PBR'
 tex = next((n.image for n in base_mat.node_tree.nodes if n.type == 'TEX_IMAGE' and n.image and 'color' in os.path.basename(n.image.filepath).lower()), None)
 if KIND == 'crawler':
     is_glow = lambda r, g, b: r > 0.85 and 0.3 < g < 0.75 and b < 0.25; glow_col = (1.0, 0.45, 0.05, 1.0)
+elif KIND == 'bomber':
+    is_glow = lambda r, g, b: r > 0.9 and g > 0.5 and b < 0.4; glow_col = (1.0, 0.6, 0.08, 1.0)     # abdômen e olhos amarelos
 else:
     is_glow = lambda r, g, b: b > 0.75 and g > 0.6 and r < 0.35; glow_col = (0.2, 0.85, 1.0, 1.0)
 glow = base_mat.copy(); glow.name = KIND + ' | Olhos'
-gb = glow.node_tree.nodes.get('Principled BSDF'); gb.inputs['Emission Color'].default_value = glow_col; gb.inputs['Emission Strength'].default_value = 1.6
+gb = glow.node_tree.nodes.get('Principled BSDF'); gb.inputs['Emission Color'].default_value = glow_col; gb.inputs['Emission Strength'].default_value = 0.8 if KIND == 'bomber' else 1.6
 mesh.data.materials.append(glow)
 if tex:
     w, h = tex.size; px = np.array(tex.pixels[:], dtype=np.float32).reshape(h, w, 4); uv = mesh.data.uv_layers.active.data; n_glow = 0
@@ -77,6 +82,11 @@ if KIND == 'crawler':
     bone_of_y = lambda y: 'Head' if y < -0.33 else 'S1' if y < -0.15 else 'S2' if y < 0.05 else 'S3'
     SPINE = [('Head', -0.49, -0.30, 0.20), ('S1', -0.33, -0.15, 0.20), ('S2', -0.15, 0.05, 0.20), ('S3', 0.05, 0.27, 0.20), ('S4', 0.27, 0.50, 0.20)]
     CENTERS = {'Head': -0.43, 'S1': -0.24, 'S2': -0.05, 'S3': 0.16, 'S4': 0.38}
+elif KIND == 'bomber':
+    T = lambda p: np.array([p[1], -p[0], p[2]])      # mesma rotação aplicada à malha (cabeça de +X para -Y)
+    RAW = [('F_R', (0.26, 0.137, 0.30), (0.316, 0.18, 0.148), (0.363, 0.216, 0.0), 1), ('M_R', (0.0225, 0.22, 0.30), (-0.048, 0.244, 0.148), (-0.099, 0.261, 0.0), 1), ('R_R', (-0.12, 0.195, 0.30), (-0.22, 0.166, 0.148), (-0.292, 0.145, 0.0), 1),
+           ('F_L', (0.20, -0.134, 0.30), (0.29, -0.182, 0.148), (0.354, -0.217, 0.0), -1), ('M_L', (0.08, -0.19, 0.30), (0.087, -0.267, 0.148), (0.094, -0.322, 0.0), -1), ('R_L', (-0.127, -0.235, 0.30), (-0.164, -0.293, 0.148), (-0.191, -0.335, 0.0), -1)]
+    legs = [dict(name='Leg_' + n, hip=T(h), knee=T(k), foot=T(f), side=1 if T(f)[0] > 0 else -1) for n, h, k, f, _ in RAW]
 else:
     ys = {1: [-0.118, 0.138, 0.361], -1: [-0.163, 0.10, 0.337]}
     legs = []
@@ -97,6 +107,11 @@ if KIND == 'crawler':
     add_bone('S1', (0, -0.33, 0.20), (0, -0.15, 0.20), 'S2'); add_bone('Head', (0, -0.49, 0.20), (0, -0.33, 0.20), 'S1')
     add_bone('S3', (0, 0.05, 0.20), (0, 0.27, 0.20), 'S2'); add_bone('S4', (0, 0.27, 0.20), (0, 0.50, 0.20), 'S3')
     for L in legs: L['parent'] = bone_of_y(L['hip'][1])
+elif KIND == 'bomber':
+    add_bone('Thorax', (0, 0.1, 0.33), (0, -0.1, 0.33), 'Root')
+    add_bone('Head', (0, -0.28, 0.30), (0, -0.48, 0.30), 'Thorax')
+    add_bone('Abdomen', (0, 0.12, 0.42), (0, 0.45, 0.45), 'Thorax')
+    for L in legs: L['parent'] = 'Thorax'
 else:
     add_bone('Thorax', (0, 0.0, 0.22), (0, 0.3, 0.22), 'Root')
     add_bone('Head', (0, -0.2, 0.2), (0, -0.49, 0.2), 'Thorax')
@@ -117,7 +132,7 @@ d_leg = np.minimum(d_up, d_lo); near_i = np.argmin(d_leg, axis=1); dl = d_leg[np
 groups = {}
 for L in legs:
     for part in ('Upper', 'Lower'): groups[f"{L['name']}_{part}"] = mesh.vertex_groups.new(name=f"{L['name']}_{part}")
-body_names = ['Head', 'S1', 'S2', 'S3', 'S4'] if KIND == 'crawler' else ['Thorax', 'Head', 'Plate']
+body_names = ['Head', 'S1', 'S2', 'S3', 'S4'] if KIND == 'crawler' else ['Thorax', 'Head', 'Abdomen'] if KIND == 'bomber' else ['Thorax', 'Head', 'Plate']
 for bn in body_names: groups[bn] = mesh.vertex_groups.new(name=bn)
 sm = lambda x: float(x * x * (3 - 2 * np.clip(x, 0, 1))) if False else float(np.clip(x, 0, 1) ** 2 * (3 - 2 * np.clip(x, 0, 1)))
 for vi in range(N):
@@ -136,6 +151,10 @@ for vi in range(N):
         tot = sum(ws.values()) or 1.0
         for k, w_ in ws.items():
             if w_ > 1e-3: groups[k].add([vi], rest * w_ / tot, 'REPLACE')
+    elif KIND == 'bomber':                                    # cabeça em -Y, abdômen em +Y
+        wh = sm((-p[1] - 0.26) / 0.10); wa = sm((p[1] - 0.06) / 0.14) * (1 - wh); wt = max(0.0, 1 - wh - wa)
+        for k, w_ in (('Head', wh), ('Abdomen', wa), ('Thorax', wt)):
+            if w_ * rest > 1e-3: groups[k].add([vi], w_ * rest, 'REPLACE')
     else:
         wp = sm((p[2] - 0.31) / 0.07) * (1.0 if p[1] > -0.34 else sm((p[1] + 0.46) / 0.12)); wh = sm((-p[1] - 0.16) / 0.2) * (1 - wp); wt = max(0.0, 1 - wp - wh)
         for k, w_ in (('Plate', wp), ('Head', wh), ('Thorax', wt)):
@@ -154,11 +173,13 @@ def rot(bone, axis, deg):
     pb.rotation_quaternion = local_for_world(pb, qaxis(axis, math.radians(deg))) @ pb.rotation_quaternion
 def move(bone, x=0, y=0, z=0):
     pb = arm.pose.bones[bone]; pb.location = pb.bone.matrix_local.to_3x3().inverted() @ Vector((x, y, z))
+def grow(bone, k):
+    pb = arm.pose.bones[bone]; pb.scale = (1 + k, 1 + k, 1 + k)
 def reset_pose():
     for pb in arm.pose.bones: pb.rotation_mode = 'QUATERNION'; pb.rotation_quaternion = (1, 0, 0, 0); pb.location = (0, 0, 0); pb.scale = (1, 1, 1)
 def key_all(frame):
     for pb in arm.pose.bones:
-        pb.keyframe_insert(data_path='rotation_quaternion', frame=frame, group=pb.name); pb.keyframe_insert(data_path='location', frame=frame, group=pb.name)
+        pb.keyframe_insert(data_path='rotation_quaternion', frame=frame, group=pb.name); pb.keyframe_insert(data_path='location', frame=frame, group=pb.name); pb.keyframe_insert(data_path='scale', frame=frame, group=pb.name)
 def create_action(name, duration, pose_fn, loop=False):
     action = bpy.data.actions.new(name); action.use_fake_user = True; arm.animation_data.action = action
     n = round(duration * FPS)
@@ -177,7 +198,7 @@ LEGS_BY_NAME = {L['name']: L for L in legs}
 def gait_phase(L):
     if KIND == 'crawler':               # marcha alternada: pares cruzados em oposição
         i = ['F', 'MF', 'MR', 'R'].index(L['name'].split('_')[1]); return math.pi * ((i + (0 if L['side'] > 0 else 1)) % 2)
-    i = ['F', 'M', 'R'].index(L['name'].split('_')[1]); return math.pi * ((i + (0 if L['side'] > 0 else 1)) % 2)      # trípode
+    i = ['F', 'M', 'R'].index(L['name'].split('_')[1]) if KIND == 'pusher' else ['F', 'M', 'R'].index(L['name'].split('_')[1]); return math.pi * ((i + (0 if L['side'] > 0 else 1)) % 2)      # trípode
 
 if KIND == 'crawler':
     def idle_pose(u):
@@ -198,6 +219,20 @@ if KIND == 'crawler':
         for L in legs:
             if L['name'].startswith('Leg_F_'): swing(L, 10 * back - 12 * hit)
     ACTIONS = [('Idle', 2.4, idle_pose, True), ('Walk', 0.7, walk_pose, True), ('Attack', 0.8, attack_pose, False)]
+elif KIND == 'bomber':
+    def idle_pose(u):
+        w = 2 * math.pi * u
+        move('Root', z=0.004 * math.sin(w)); grow('Abdomen', 0.025 * math.sin(w)); rot('Head', Z, 4 * math.sin(w * 0.5)); rot('Head', X, 2 * math.sin(w + 0.6))
+        for i, L in enumerate(legs): rot(L['name'] + '_Upper', Z, 1.2 * math.sin(w + i))
+    def walk_pose(u):
+        w = 2 * math.pi * u
+        for L in legs: step(L, w + gait_phase(L), 20, 24)
+        move('Root', z=0.008 * math.cos(2 * w)); rot('Thorax', Z, 2 * math.sin(w)); rot('Abdomen', Z, -3 * math.sin(w)); rot('Abdomen', X, 2 * math.sin(2 * w)); grow('Abdomen', 0.02 * math.sin(2 * w))
+    def swell_pose(u):                 # prestes a explodir: agacha, treme e o abdômen incha e pulsa (loop curto)
+        w = 2 * math.pi * u
+        move('Root', z=-0.035, x=0.008 * math.sin(w * 6)); grow('Abdomen', 0.18 + 0.07 * math.sin(w * 2)); rot('Head', X, -8); rot('Thorax', X, -3)
+        for L in legs: rot(L['name'] + '_Upper', Y, L['side'] * 7); rot(L['name'] + '_Lower', Y, L['side'] * 5)
+    ACTIONS = [('Idle', 2.0, idle_pose, True), ('Walk', 0.6, walk_pose, True), ('Swell', 0.5, swell_pose, True)]
 else:
     def idle_pose(u):
         w = 2 * math.pi * u

@@ -53,7 +53,7 @@ const ENEMY_TYPES = {
   crawler: { hp: 30, speed: 6.2, dmg: 9, radius: 0.9, height: 0.8, scale: 2.1, color: 0x8a2b22 },
   spitter: { hp: 45, speed: 3.4, dmg: 12, radius: 0.95, height: 0.65, scale: 1.6, color: 0x3d7a34 },
   brute:   { hp: 450, speed: 3.6, dmg: 28, radius: 2.0, height: 2.0, scale: 2.4, color: 0x4a3a66 },
-  bomber:  { hp: 40, speed: 5.4, dmg: 35, radius: 0.9, height: 0.9, scale: 1, color: 0xb8651f },
+  bomber:  { hp: 40, speed: 5.4, dmg: 35, radius: 0.9, height: 0.9, scale: 1.5, color: 0xb8651f },
   charger: { hp: 150, speed: 4.2, dmg: 32, radius: 1.3, height: 1.1, scale: 2.2, color: 0x56697a },
   queen:   { hp: 1800, speed: 2.2, dmg: 38, radius: 4.2, height: 4.4, scale: 9, color: 0x6a2b6f },     // insetos: o gigante de seis pernas (pisada e jato de ácido), ~4x o jogador
   // Titã ácido: gigante lento; pisa (área) e cospe um jato de ácido (inspirado no Bile Titan). Esfera de acerto no meio do corpo (as pernas são longas).
@@ -532,7 +532,7 @@ function makeSpiderMesh() {
   const g = new THREE.Group();
   const model = cloneSkeleton(spiderAsset.scene);
   model.rotation.y = Math.PI; // o FBX aponta para +Z; os inimigos do jogo avançam por -Z
-  model.traverse(o => { if (o.isMesh) { o.material = o.material.clone(); o.castShadow = true; o.frustumCulled = false; } });   // materiais próprios: o brilho de elite não vaza para as outras aranhas
+  model.traverse(o => { if (o.isMesh) { o.material = o.material.clone(); o.material.flatShading = true; o.castShadow = true; o.frustumCulled = false; } });   // materiais próprios: o brilho de elite não vaza para as outras aranhas
   g.add(model);
   const mixer = new THREE.AnimationMixer(model), actions = {};
   for (const clip of spiderAsset.animations) actions[clip.name] = mixer.clipAction(clip);
@@ -569,7 +569,7 @@ function animateSpider(enemy, dt, moving) {
   spider.mixer.update(spider.acc); spider.acc = 0;
 }
 // Criaturas rigadas: rastejador (assets/crawler.glb) e investidor (assets/pusher.glb), com marcha de aranha. Ações: Idle, Walk e, por tipo, Attack | Wind, Charge, Stun.
-const CREATURE_FILE = { crawler: 'crawler', charger: 'pusher' };
+const CREATURE_FILE = { crawler: 'crawler', charger: 'pusher', bomber: 'bomber' };
 const creatureAssets = {}, creaturePromises = {};
 function loadCreature(type) {
   if (creatureAssets[type]) return Promise.resolve(creatureAssets[type]);
@@ -580,11 +580,11 @@ function loadCreature(type) {
 }
 const loadCreatures = () => Promise.all(Object.keys(CREATURE_FILE).map(loadCreature));
 const ONCE_ACTIONS = new Set(['Attack']);
-const CREATURE_SPEED = { crawler: { Walk: 2.1 }, charger: { Walk: 1.5 } };       // sincroniza o passo com a velocidade em solo
+const CREATURE_SPEED = { crawler: { Walk: 2.1 }, charger: { Walk: 1.5 }, bomber: { Walk: 2.0 } };       // sincroniza o passo com a velocidade em solo
 function makeCreatureMesh(type) {
   const asset = creatureAssets[type], g = new THREE.Group(), model = cloneSkeleton(asset.scene);
   model.rotation.y = Math.PI;                                    // o modelo olha para +Z; os inimigos avançam por -Z
-  model.traverse(o => { if (o.isMesh) { o.material = o.material.clone(); o.castShadow = true; o.frustumCulled = false; } });
+  model.traverse(o => { if (o.isMesh) { o.material = o.material.clone(); o.material.flatShading = true; o.castShadow = true; o.frustumCulled = false; } });
   g.add(model);
   const mixer = new THREE.AnimationMixer(model), actions = {};
   for (const clip of asset.animations) actions[clip.name] = mixer.clipAction(clip);
@@ -610,6 +610,7 @@ function animateCreature(e, dt, moving) {
   const C = e.mesh.userData.cr; if (!C) return;
   if (C.atkT > 0) C.atkT = Math.max(0, C.atkT - dt);
   const want = C.type === 'charger' ? (e.st === 'wind' ? 'Wind' : e.st === 'charge' ? 'Charge' : e.st === 'stun' ? 'Stun' : moving ? 'Walk' : 'Idle')
+    : C.type === 'bomber' ? (e.st === 'wind' ? 'Swell' : moving ? 'Walk' : 'Idle')
     : C.atkT > 0 ? 'Attack' : moving ? 'Walk' : 'Idle';
   setCreatureAction(C, want);
   C.acc = (C.acc || 0) + dt;
@@ -628,7 +629,7 @@ function loadTitan() {
 function makeTitanMesh(type = 'titan') {
   const g = new THREE.Group(), model = cloneSkeleton(titanAsset.scene);
   model.rotation.y = Math.PI;                                    // o modelo olha para +Z; os inimigos avançam por -Z
-  model.traverse(o => { if (o.isMesh) { o.material = o.material.clone(); o.castShadow = true; o.frustumCulled = false; } });
+  model.traverse(o => { if (o.isMesh) { o.material = o.material.clone(); o.material.flatShading = true; o.castShadow = true; o.frustumCulled = false; } });
   g.add(model);
   const mixer = new THREE.AnimationMixer(model), actions = {};
   for (const clip of titanAsset.animations) actions[clip.name] = mixer.clipAction(clip);
@@ -3148,7 +3149,8 @@ function updateEnemies(dt) {
       }
     } else if (e.type === 'bomber') {
       walkTo(e.t.speed);
-      const s = 1 + 0.1 * Math.sin(e.phase * 2); m.scale.setScalar(e.t.scale * s);
+      e.st = dist < 7 ? 'wind' : 'walk';                  // perto do alvo o abdômen incha (ação Swell)
+      if (!m.userData.cr) { const s = 1 + 0.1 * Math.sin(e.phase * 2); m.scale.setScalar(e.t.scale * s); }
       if (dist < 2.2) killEnemy(e);                      // explode ao chegar perto
     } else if (e.type === 'charger') {
       e.stT -= dt;
@@ -3585,7 +3587,7 @@ function updateClientWorld(dt) {
     let dr = e.tr - m.rotation.y; dr = Math.atan2(Math.sin(dr), Math.cos(dr)); m.rotation.y += dr * k;
     e.phase += dt * (e.type === 'crawler' || e.type === 'bomber' ? 14 : 7);
     m.position.y = (m.userData.bot || m.userData.spider || m.userData.cr) ? 0 : Math.abs(Math.sin(e.phase)) * 0.12;
-    if (e.type === 'bomber') m.scale.setScalar(e.t.scale * (1 + 0.1 * Math.sin(e.phase * 2)));
+    if (e.type === 'bomber' && !m.userData.cr) m.scale.setScalar(e.t.scale * (1 + 0.1 * Math.sin(e.phase * 2)));
     else if (e.type === 'charger' && e.st === 'wind' && !m.userData.cr) m.scale.setScalar(e.t.scale * (1 + 0.04 * Math.sin(e.phase * 8)));
     animateSpider(e, dt, Math.hypot(m.position.x - beforeX, m.position.z - beforeZ) > 0.002);
     animateTitan(e, dt, Math.hypot(m.position.x - beforeX, m.position.z - beforeZ) > 0.002);

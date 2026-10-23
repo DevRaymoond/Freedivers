@@ -69,3 +69,7 @@
 
 ## 2026-10-23 (Rainha é o gigante)
 - O gigante de seis pernas (`assets/titan.glb`) passa a ser a **Rainha da colmeia** dos insetos: ~9 m, pisada em área, jato de ácido e convocação do enxame, com a barra de chefe da missão. O Titã ácido deixou de aparecer sozinho nas outras missões e nas ondas da Operação Gerador. Com robôs, o chefe continua sendo o Comandante Mecha.
+
+## 2026-10-23 (bombardeiro novo e modelos otimizados)
+- **Bombardeiro** (inseto explosivo) passa a usar a formiga nova (`assets/bomber.glb`), rigada por `tools/build_mob.py`: 6 pernas em trípode, abdômen brilhante e ações `Idle`, `Walk` e `Swell` (agacha, treme e incha o abdômen quando chega a 7 m do alvo; estado `wind` na rede). Com robôs continua o modelo antigo.
+- **Modelos otimizados** sem perda visível: vértices soldados, normais removidas (o jogo usa `flatShading`) e posições quantizadas (`tools/optimize/optimize_glb.mjs`). Aranha, corredor, empurrador, Rainha e bombardeiro: de ~9 MB para ~3,4 MB no total. Desvio máximo medido nas animações: 0,05% do tamanho do modelo.
