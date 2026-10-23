@@ -1,0 +1,28 @@
+<!doctype html><meta charset="utf-8"><title>sheet</title>
+<style>html,body{margin:0;background:#556;overflow:hidden}</style>
+<script type="importmap">{"imports":{"three":"../lib/three.module.js"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../lib/jsm/loaders/GLTFLoader.js';
+const q = new URLSearchParams(location.search);
+const N = +(q.get('n') || 8), yaw = +(q.get('yaw') || 90) * Math.PI / 180, anim = q.get('anim');
+const r = new THREE.WebGLRenderer({ antialias: true }); r.setSize(innerWidth, innerHeight); r.setScissorTest(true); document.body.append(r.domElement);
+const s = new THREE.Scene(); s.background = new THREE.Color(0x667788);
+s.add(new THREE.HemisphereLight(0xffffff, 0x445566, 1.5)); const d = new THREE.DirectionalLight(0xffffff, 2); d.position.set(2, 3, 4); s.add(d);
+const g = await new GLTFLoader().loadAsync('../assets/character.glb');
+g.scene.traverse(o => { if (o.isMesh) o.frustumCulled = false; });
+s.add(g.scene);
+const mixer = new THREE.AnimationMixer(g.scene); const names = anim.split(' ');
+const clip = g.animations.find(a => a.name === names[0]); for (const nm of names) mixer.clipAction(g.animations.find(a => a.name === nm)).play();
+const cols = Math.min(N, +(q.get('cols') || N)), rows = Math.ceil(N / cols), w = innerWidth / cols, h = innerHeight / rows;
+const c = new THREE.PerspectiveCamera(30, w / h, 0.1, 50);
+for (let i = 0; i < N; i++) {
+  const loopT = clip.duration * (q.get('loop') === '0' ? i / (N - 1) : i / N);
+  mixer.setTime(loopT);
+  const cx = (i % cols) * w, cy = innerHeight - (Math.floor(i / cols) + 1) * h;
+  r.setViewport(cx, cy, w, h); r.setScissor(cx, cy, w, h);
+  const dist = 7.5 * (+(q.get('far') || 1)), ty = 0.95;
+  c.position.set(Math.sin(yaw) * dist, ty, Math.cos(yaw) * dist); c.lookAt(0, ty, 0);
+  r.render(s, c);
+}
+</script>

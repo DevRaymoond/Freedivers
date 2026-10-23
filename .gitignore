@@ -1,0 +1,7 @@
+node_modules/
+tools/.venv/
+tools/__pycache__/
+# modelos e texturas originais fornecidos pelo autor (usados só para regenerar assets/character.glb)
+tools/source/
+tools/*.png
+assets/*_preview.png

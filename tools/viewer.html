@@ -1,0 +1,22 @@
+<!doctype html><meta charset="utf-8"><title>viewer</title>
+<style>html,body{margin:0;background:#556;overflow:hidden}</style>
+<script type="importmap">{"imports":{"three":"../lib/three.module.js"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../lib/jsm/loaders/GLTFLoader.js';
+const q = new URLSearchParams(location.search);
+const r = new THREE.WebGLRenderer({antialias:true}); r.setSize(innerWidth, innerHeight); document.body.append(r.domElement);
+const s = new THREE.Scene(); s.background = new THREE.Color(0x667788);
+s.add(new THREE.HemisphereLight(0xffffff, 0x445566, 1.4)); const d = new THREE.DirectionalLight(0xffffff, 2); d.position.set(2,3,4); s.add(d);
+const g = await new GLTFLoader().loadAsync(q.get('model'));
+const box = new THREE.Box3().setFromObject(g.scene); const h = box.max.y - box.min.y;
+if (q.get('wire')) g.scene.traverse(o => { if (o.isMesh) o.material.wireframe = true; });
+g.scene.traverse(o => { if (o.isMesh) o.material.side = q.get('single') ? THREE.FrontSide : THREE.DoubleSide; });
+s.add(g.scene);
+if (q.get('anim')) { const m = new THREE.AnimationMixer(g.scene); for (const nm of q.get('anim').split(' ')) m.clipAction(g.animations.find(a => a.name === nm)).play(); m.setTime(+(q.get('t') || 0)); }
+const yaw = +(q.get('yaw') || 0) * Math.PI / 180, pitch = +(q.get('pitch') || 0) * Math.PI / 180, zoom = +(q.get('zoom') || 1);
+const c = new THREE.PerspectiveCamera(30, innerWidth / innerHeight, 0.01, 100);
+const dist = h * 1.9 / zoom, ty = box.min.y + h * (+(q.get('ty') || 0.5));
+c.position.set(Math.sin(yaw) * Math.cos(pitch) * dist, ty + Math.sin(pitch) * dist, Math.cos(yaw) * Math.cos(pitch) * dist); c.lookAt(0, ty, 0);
+r.render(s, c); window.__done = true;
+</script>
