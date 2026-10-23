@@ -1989,7 +1989,7 @@ const ago = at => { const m = Math.round((Date.now() - at) / 60000); return m < 
 function renderChatMessages() {
   const box = $('chatMsgs'); if (!box || CHAT.active == null) return;
   const arr = CHAT.hist[CHAT.active] || []; box.textContent = '';
-  if (!arr.length) { const p = document.createElement('small'); p.textContent = 'Nenhuma mensagem ainda. O histórico fica só neste aparelho.'; box.appendChild(p); }
+  if (!arr.length) { const p = document.createElement('small'); p.textContent = 'Nenhuma mensagem ainda.'; box.appendChild(p); }
   for (const m of arr) {
     const d = document.createElement('div'); d.className = 'cm' + (m.m ? ' mine' : '');
     const w = document.createElement('b'); w.textContent = m.m ? 'Você' : (m.f || ''); const t = document.createElement('span'); t.textContent = m.t;
@@ -2035,13 +2035,13 @@ function renderFriends(el) {
         (f.online && f.squad && net.role === 'solo' && !f.squad.locked && f.squad.members < f.squad.max && f.squad.policy !== 'closed' ? b('sq:joinf', f.squad.id, 'Entrar no esquadrão') : '') +
         b('f:remove', f.id, 'Remover') + b('f:block', f.id, 'Bloquear', 'ghost'))).join('') : '<small>Você ainda não tem amigos. Envie um pedido acima.</small>'}</div>
     <div class="camp-box" style="margin-top:12px"><h4>Jogados recentemente</h4>
-      ${recents.length ? recents.slice(0, 12).map(r => `<div class="fr-row"><b>${esc(r.name)}</b><em>jogou com você ${ago(r.at)}</em><span class="fr-btns">${b('f:addname', esc(r.name), 'Adicionar') + b('f:blockname', esc(r.name), 'Bloquear', 'ghost')}</span></div>`).join('') : '<small>Quem entrar no seu esquadrão (ou você no deles) aparece aqui. A lista fica só neste aparelho.</small>'}</div>
+      ${recents.length ? recents.slice(0, 12).map(r => `<div class="fr-row"><b>${esc(r.name)}</b><em>jogou com você ${ago(r.at)}</em><span class="fr-btns">${b('f:addname', esc(r.name), 'Adicionar') + b('f:blockname', esc(r.name), 'Bloquear', 'ghost')}</span></div>`).join('') : '<small>Quem jogar com você aparece aqui.</small>'}</div>
     ${FR.outgoing.length ? `<div class="camp-box" style="margin-top:12px"><h4>Pedidos enviados</h4>${FR.outgoing.map(f => row({ ...f, online: false }, b('f:cancel', f.id, 'Cancelar')).replace('<em>offline</em>', '<em>aguardando</em>')).join('')}</div>` : ''}
     ${FR.blocked.length ? `<div class="camp-box" style="margin-top:12px"><h4>Bloqueados</h4>${FR.blocked.map(f => row({ ...f, online: false }, b('f:unblock', f.id, 'Desbloquear')).replace('<em>offline</em>', '')).join('')}</div>` : ''}
     </div>
     <div class="camp-box chat" id="chatPanel"><h4>Chat</h4>
       <div class="chat-tabs">${inRoom ? `<button data-chat="sq" class="${CHAT.active === 'sq' ? 'on' : ''}">Esquadrão${unread('sq')}</button>` : ''}${FR.friends.map(f => `<button data-chat="${f.id}" class="${String(CHAT.active) === String(f.id) ? 'on' : ''}">${esc(f.name)}${unread(f.id)}</button>`).join('')}</div>
-      ${CHAT.active == null ? '<small>Escolha uma conversa acima. O Multipunk só repassa as mensagens: <b>não guarda conversa nem dados</b>. O histórico fica apenas neste aparelho.</small>' : `
+      ${CHAT.active == null ? '<small>Escolha uma conversa acima.</small>' : `
         <div id="chatMsgs" class="chat-msgs"></div>
         <div style="display:flex;gap:8px;margin-top:8px"><input class="field" id="chatIn" maxlength="300" placeholder="Digite e aperte Enter" autocomplete="off"><button class="btn primary" id="chatSend">Enviar</button></div>
         <button class="btn ghost" id="chatClear" style="margin-top:8px;padding:5px 12px;font-size:11px">Apagar histórico deste aparelho</button>`}
@@ -2256,7 +2256,7 @@ function renderHome() {
 }
 function renderSettings() {
   const seg = (key, opts) => `<div class="seg" data-key="${key}">${opts.map(([v, l]) => `<button data-v="${v}" class="${String(settings[key]) === String(v) ? 'on' : ''}">${l}</button>`).join('')}</div>`;
-  $('pane-settings').innerHTML = `<h2 class="sec">Configurações · salvas só neste aparelho</h2>
+  $('pane-settings').innerHTML = `<h2 class="sec">Configurações</h2>
     <div class="set-list">
       <div class="set-row"><div><b>Volume geral</b><small>Efeitos sonoros do jogo</small></div><div class="set-ctl"><input type="range" id="setVol" min="0" max="100" value="${Math.round(settings.volume * 100)}"><em id="setVolV">${Math.round(settings.volume * 100)}%</em></div></div>
       <div class="set-row"><div><b>Sensibilidade da mira</b><small>${isTouch ? 'Arrastar o dedo na tela' : 'Movimento do mouse'}</small></div><div class="set-ctl"><input type="range" id="setSens" min="0.4" max="2.5" step="0.05" value="${settings.sens}"><em id="setSensV">${settings.sens.toFixed(2)}×</em></div></div>
@@ -3568,7 +3568,7 @@ function renderCodeRooms(el) {
     <div class="grid">
       <div class="card">
         <small class="k">PERFIL</small><h4>Seu nome</h4>
-        <p>${AUTH.user ? 'Seu nome de usuário aparece sobre a sua cabeça. ' : 'Aparece sobre a sua cabeça para os outros jogadores. '}Créditos, melhorias e recordes ficam salvos <b>só neste aparelho</b>${AUTH.user ? '; o mapa online é compartilhado por todos' : ''}.</p>
+        <p>Seu nome aparece sobre a sua cabeça para os outros jogadores.</p>
         ${AUTH.user ? `<b style="color:var(--accent);letter-spacing:2px">${esc(AUTH.user.name)}</b>` : `<input class="field" id="nameIn" maxlength="16" placeholder="Seu nome" value="${(save.name || '').replace(/"/g, '')}" ${inRoom ? 'disabled' : ''}>`}
       </div>
       ${inRoom ? `
