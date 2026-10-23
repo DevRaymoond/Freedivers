@@ -49,7 +49,7 @@ const FT = s => curFaction !== 'bots' ? s : String(s)
 
 const ENEMY_TYPES = {
   crawler: { hp: 30, speed: 6.2, dmg: 9, radius: 0.9, height: 0.8, scale: 1, color: 0x8a2b22 },
-  spitter: { hp: 45, speed: 3.4, dmg: 12, radius: 1.0, height: 1.3, scale: 1.1, color: 0x3d7a34 },
+  spitter: { hp: 45, speed: 3.4, dmg: 12, radius: 0.95, height: 0.65, scale: 1.6, color: 0x3d7a34 },
   brute:   { hp: 450, speed: 3.6, dmg: 28, radius: 2.0, height: 2.0, scale: 2.4, color: 0x4a3a66 },
   bomber:  { hp: 40, speed: 5.4, dmg: 35, radius: 0.9, height: 0.9, scale: 1, color: 0xb8651f },
   charger: { hp: 150, speed: 4.2, dmg: 32, radius: 1.3, height: 1.1, scale: 1.5, color: 0x56697a },
@@ -495,9 +495,55 @@ function animateBots(dt) {
     animateBot(bot, { dt, speed: Math.min(speed, 9), engaged: e.t.reach > 0 && d < e.t.reach, aim: e.t.kind === 'gun' && d < 42 ? 1 : 0, charge: e.st === 'charge' });
   }
 }
+let spiderAsset = null, spiderLoadPromise = null;
+function loadSpider() {
+  if (spiderAsset) return Promise.resolve(spiderAsset);
+  if (!spiderLoadPromise) spiderLoadPromise = new GLTFLoader().loadAsync('./assets/spider.glb')
+    .then(gltf => (spiderAsset = gltf))
+    .catch(err => { console.warn('Aranha rigada indisponível; usando o modelo de reserva.', err); spiderLoadPromise = null; return null; });
+  return spiderLoadPromise;
+}
+function makeSpiderMesh() {
+  const g = new THREE.Group();
+  const model = cloneSkeleton(spiderAsset.scene);
+  model.rotation.y = Math.PI; // o FBX aponta para +Z; os inimigos do jogo avançam por -Z
+  model.traverse(o => { if (o.isMesh) { o.material = o.material.clone(); o.castShadow = true; o.frustumCulled = false; } });   // materiais próprios: o brilho de elite não vaza para as outras aranhas
+  g.add(model);
+  const mixer = new THREE.AnimationMixer(model), actions = {};
+  for (const clip of spiderAsset.animations) actions[clip.name] = mixer.clipAction(clip);
+  const idle = actions.Idle;
+  if (idle) { idle.setLoop(THREE.LoopRepeat, Infinity); idle.play(); }
+  g.scale.setScalar(ENEMY_TYPES.spitter.scale);
+  g.userData.spider = { mixer, actions, active: 'Idle', spitT: 0 };
+  return g;
+}
+function setSpiderAction(spider, name) {
+  const next = spider.actions[name];
+  if (!next || spider.active === name) return;
+  const previous = spider.actions[spider.active];
+  next.setLoop(name === 'Spit' ? THREE.LoopOnce : THREE.LoopRepeat, name === 'Spit' ? 1 : Infinity);
+  next.clampWhenFinished = name === 'Spit';
+  next.reset().fadeIn(0.12).play();
+  if (previous) previous.fadeOut(0.12);
+  spider.active = name;
+}
+function triggerSpiderSpit(enemy) {
+  const spider = enemy.mesh.userData.spider;
+  if (!spider) return;
+  spider.spitT = Math.max(0.9, spider.actions.Spit?.getClip().duration || 0.9);
+  setSpiderAction(spider, 'Spit');
+}
+function animateSpider(enemy, dt, moving) {
+  const spider = enemy.mesh.userData.spider;
+  if (!spider) return;
+  if (spider.spitT > 0) spider.spitT = Math.max(0, spider.spitT - dt);
+  setSpiderAction(spider, spider.spitT > 0 ? 'Spit' : moving ? 'Walk' : 'Idle');
+  spider.mixer.update(dt);
+}
 function makeEnemyMesh(type, fac = curFaction) {
   if (fac === 'bots' && botsReady()) return makeBotMesh(type);
   const t = ENEMY_TYPES[type];
+  if (type === 'spitter' && fac !== 'bots' && spiderAsset) return makeSpiderMesh();
   const g = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({ color: t.color, roughness: 0.7, flatShading: true });
   const dark = new THREE.MeshStandardMaterial({ color: 0x1a1210, roughness: 0.9 });
@@ -1448,8 +1494,9 @@ function clearWorld() {
 
 let campaignCell = null, campaignRemote = false, curBiome = 'desert', startBase = null;
 const lateSent = new Set();
-function startMission(id, levelArg, opts = {}) {
+async function startMission(id, levelArg, opts = {}) {
   if (net.role === 'client') return;
+  if ((opts.faction || selFaction) !== 'bots' || opts.mix) await loadSpider();
   const mi = MISSIONS.findIndex(m => m.id === id);
   if (!opts.cell && !missionUnlocked(mi)) { say('Fase bloqueada: vença a anterior em nível 3 ou mais.', 3); return; }
   ensureAudio();
@@ -2657,18 +2704,20 @@ function patrolMove(e, dt) {
   const m = e.mesh, pl = e.pl;
   const goal = pl.anchor.clone().add(formationOffset(e.slot, pl.heading));
   const to = goal.sub(m.position).setY(0), d = to.length();
-  e.phase += dt * 5; m.position.y = Math.abs(Math.sin(e.phase)) * 0.08;
+  e.phase += dt * 5; m.position.y = m.userData.spider ? 0 : Math.abs(Math.sin(e.phase)) * 0.08;
   if (d > 0.5) {
     const sp = Math.min(e.t.speed * 0.7 * e.spd, 2.3 + d * 1.6);
     to.normalize(); m.position.addScaledVector(steerRocks(m.position, to, e.t.radius * 0.6, e), sp * dt);
     m.rotation.y = Math.atan2(-to.x, -to.z);
   } else m.rotation.y = Math.atan2(-Math.sin(pl.heading), -Math.cos(pl.heading));
+  animateSpider(e, dt, d > 0.5);
 }
 
 function updateEnemies(dt) {
   for (const e of [...enemies]) {
     if (!enemies.includes(e)) continue;
     const m = e.mesh;
+    const beforeX = m.position.x, beforeZ = m.position.z;
     if (e.pl && e.pl.state === 'patrol') { patrolMove(e, dt); resolveRocks(m.position, e.t.radius * 0.6); continue; }
     const tg = enemyTarget(e);
     const to = tg.pos.clone().sub(m.position).setY(0);
@@ -2680,7 +2729,7 @@ function updateEnemies(dt) {
       m.position.addScaledVector(steerRocks(m.position, d0, e.t.radius * 0.6, e, sp >= 0 ? tg : null), Math.abs(sp) * dt * e.spd);
     };
     e.phase += dt * (e.type === 'crawler' || e.type === 'bomber' ? 14 : 7);
-    m.position.y = m.userData.bot ? 0 : Math.abs(Math.sin(e.phase)) * 0.12;
+    m.position.y = (m.userData.bot || m.userData.spider) ? 0 : Math.abs(Math.sin(e.phase)) * 0.12;
     m.rotation.y = Math.atan2(-dir.x, -dir.z);
 
     if (e.type === 'spitter') {
@@ -2690,7 +2739,8 @@ function updateEnemies(dt) {
       e.shootCd -= dt;
       if (e.shootCd <= 0 && dist < 38) {
         e.shootCd = rand(1.8, 3);
-        const from = m.position.clone().setY(curFaction === 'bots' ? 1.15 : 1.5);
+        if (e.fac !== 'bots') triggerSpiderSpit(e);
+        const from = m.position.clone().setY(e.fac === 'bots' ? 1.15 : 0.62);
         spitAt(from, tg.pos.clone().add(new THREE.Vector3(0, 1.1, 0)).sub(from), 18, e.t.dmg * e.dm, false, e.fac);
         beep(240, 0.12, 0.05);
       }
@@ -2750,6 +2800,7 @@ function updateEnemies(dt) {
       }
     }
     resolveRocks(m.position, e.t.radius * 0.6);
+    animateSpider(e, dt, Math.hypot(m.position.x - beforeX, m.position.z - beforeZ) > 0.002);
   }
   animateBots(dt);
 }
@@ -3030,6 +3081,14 @@ function applySnapshot(d) {
       const big = a[4] & 1, bt = !!(a[4] & 2);
       const m = new THREE.Mesh(new THREE.SphereGeometry(big ? (bt ? 0.3 : 0.45) : (bt ? 0.14 : 0.28), 8, 6), new THREE.MeshBasicMaterial({ color: bt ? (big ? 0xff3030 : 0xffb03a) : (big ? 0xff40c0 : 0xa4ff6a) }));
       m.position.set(a[1], a[2], a[3]); scene.add(m); p = { id: a[0], m, tp: new THREE.Vector3() }; projById.set(a[0], p); projectiles.push(p);
+      if (!bt) {
+        let shooter = null, nearest = 2.4;
+        for (const e of enemies) if (e.fac === 'bugs' && e.type === 'spitter') {
+          const d = Math.hypot(e.mesh.position.x - a[1], e.mesh.position.z - a[3]);
+          if (d < nearest) { nearest = d; shooter = e; }
+        }
+        if (shooter) triggerSpiderSpit(shooter);
+      }
     }
     p.tp.set(a[1], a[2], a[3]);
   }
@@ -3077,12 +3136,14 @@ function updateClientWorld(dt) {
   const k = 1 - Math.exp(-dt * 14);
   for (const e of enemies) {
     const m = e.mesh;
+    const beforeX = m.position.x, beforeZ = m.position.z;
     m.position.x += (e.tx - m.position.x) * k; m.position.z += (e.tz - m.position.z) * k;
     let dr = e.tr - m.rotation.y; dr = Math.atan2(Math.sin(dr), Math.cos(dr)); m.rotation.y += dr * k;
     e.phase += dt * (e.type === 'crawler' || e.type === 'bomber' ? 14 : 7);
-    m.position.y = m.userData.bot ? 0 : Math.abs(Math.sin(e.phase)) * 0.12;
+    m.position.y = (m.userData.bot || m.userData.spider) ? 0 : Math.abs(Math.sin(e.phase)) * 0.12;
     if (e.type === 'bomber') m.scale.setScalar(e.t.scale * (1 + 0.1 * Math.sin(e.phase * 2)));
     else if (e.type === 'charger' && e.st === 'wind') m.scale.setScalar(e.t.scale * (1 + 0.04 * Math.sin(e.phase * 8)));
+    animateSpider(e, dt, Math.hypot(m.position.x - beforeX, m.position.z - beforeZ) > 0.002);
   }
   animateBots(dt);
   for (const p of projectiles) if (p.tp) p.m.position.lerp(p.tp, k);
@@ -3155,8 +3216,9 @@ net.onClosed = msg => {
   $('sub').textContent = msg; renderAll();
 };
 
-function clientStartMission(d) {
+async function clientStartMission(d) {
   ensureAudio();
+  await loadSpider();
   if (missionBusy()) { clearWorld(); }
   relax = !!d.relax;
   campaignCell = d.cell || null; campaignRemote = !!d.remote; mixFac = null; clientMixed = false;

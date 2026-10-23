@@ -11,3 +11,4 @@ assets/*_preview.png
 .env.*
 !.env.example
 deploy/.env
+*.blend1

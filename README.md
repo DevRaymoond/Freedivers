@@ -113,6 +113,7 @@ botão **FOGO** grande (segure e arraste para mirar atirando) e botões DASH, RE
 
 ## Estrutura
 - `server.js` servidor estático + relé WebSocket das salas · `net.js` cliente de rede · `main.js` jogo · `bots.js` robôs · `cursor.js` cursor "blob"
-- `assets/character.glb` personagem · `assets/robot.glb` inimigo robô · `lib/` three.js · `tools/` geração do personagem e visualizadores
+- `assets/character.glb` personagem · `assets/robot.glb` inimigo robô · `assets/spider.glb` aranha rigada (Idle, Walk e Spit) · `lib/` three.js · `tools/` geração de modelos e visualizadores
 - Personagem: `tools/build_final.py` (precisa de Python; `tools/source/` com os modelos originais não vai para o repositório):
   `python tools/build_final.py tools/source/cyber_rigged.glb tools/source/texture.webp assets/character.glb --fix-face`
+- Aranha: abra `assets/spider.blend` no Blender; `tools/build_spider.py` regenera o projeto e o `.glb` (com a malha reduzida) usando o FBX e as texturas locais em `tools/source/spider/`; depois rode `tools/shrink_glb.py assets/spider.glb` para encolher as texturas.
