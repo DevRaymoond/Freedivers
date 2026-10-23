@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Freedivers</title>
+<title>Multipunk</title>
 <style>
   :root {
     --bg: #07090c; --panel: #10151cee; --panel2: #161d27; --line: #2b3644; --line2: #3b4a5d;
@@ -166,6 +166,19 @@
   .res-total span { letter-spacing: 4px; color: var(--dim); } .res-total b { font-family: var(--mono); font-size: 54px; color: var(--accent); }
   .res-total i { font-style: normal; font-size: 46px; font-weight: 700; border: 3px solid var(--accent); padding: 0 16px; color: var(--accent); }
   #resCredits { color: var(--dim); font-family: var(--mono); font-size: 13px; margin: 8px 0 20px; min-height: 18px; }
+
+  /* ───────── Online ───────── */
+  #party { position: absolute; left: 24px; top: 24px; width: 200px; text-shadow: 0 2px 6px #000; }
+  #party .pm { margin-bottom: 8px; font-size: 13px; letter-spacing: 1px; } #party .pm b { color: #ffd27a; font-weight: 600; }
+  #party .pm .meter { height: 6px; margin-top: 3px; } #party .pm.dead { opacity: .5; } #party .pm.dead .meter i { background: var(--danger); }
+  #clickGo { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; z-index: 45; background: #000a; font-size: 22px; letter-spacing: 6px; color: var(--accent); text-transform: uppercase; text-align: center; }
+  #clickGo.on { display: flex; } #clickGo small { display: block; margin-top: 10px; letter-spacing: 2px; font-size: 13px; color: var(--dim); }
+  .field { width: 100%; padding: 12px 14px; font: inherit; font-size: 16px; letter-spacing: 2px; color: var(--text); background: #0a0e13; border: 1px solid var(--line2); outline: none; user-select: text; }
+  .field:focus { border-color: var(--accent); } .field.code { text-transform: uppercase; text-align: center; font-family: var(--mono); font-size: 24px; letter-spacing: 10px; }
+  .roomcode { font-family: var(--mono); font-size: 44px; letter-spacing: 14px; color: var(--accent); margin: 8px 0 4px; user-select: text; }
+  .pm-list { margin-top: 10px; } .pm-row { display: flex; justify-content: space-between; padding: 8px 4px; border-bottom: 1px solid var(--line); font-size: 15px; }
+  .pm-row i { font-style: normal; font-family: var(--mono); font-size: 11px; letter-spacing: 2px; color: var(--dim); }
+  .onlinemsg { margin-top: 16px; color: var(--accent); font-family: var(--mono); font-size: 13px; min-height: 18px; }
   @media (max-width: 1100px) {
     .topbar { padding: 12px 16px; gap: 12px; } .logo { font-size: 20px; letter-spacing: 4px; } .logo small { display: none; }
     .tab { padding: 10px 9px; letter-spacing: 1px; font-size: 12px; } #tabs { margin-left: 4px; }
@@ -179,6 +192,7 @@
   <div id="dmg"></div>
   <div id="cross"></div>
   <div id="objective"><b id="oTitle"></b><div id="oText"></div><div class="bar"><i id="oBar"></i></div><div id="lives"></div></div>
+  <div id="party"></div>
   <div id="wp"><span id="arrow"></span><div id="wpText"></div></div>
   <div id="boss"><b id="bossName"></b><div class="meter"><i id="bossBar"></i></div></div>
   <div id="msg"></div>
@@ -196,6 +210,7 @@
   </div>
 </div>
 <div id="fade"></div>
+<div id="clickGo"><div>Clique para entrar na operação<small>O mouse fica preso à tela. ESC abre o menu (o jogo continua para os outros).</small></div></div>
 
 <div id="loot"><div class="loot-card" id="lootCard">
   <small id="lootLvl">NÍVEL 2</small>
@@ -206,7 +221,7 @@
 
 <div id="menu">
   <header class="topbar">
-    <div class="logo"><span class="mark"></span><div><b>FREE</b>DIVERS<small>FORÇA DE INTERVENÇÃO · SOLO · OFFLINE</small></div></div>
+    <div class="logo"><span class="mark"></span><div><b>MULTI</b>PUNK<small>COOP ONLINE · SOLO · FORÇA DE INTERVENÇÃO</small></div></div>
     <nav id="tabs"></nav>
     <div class="wallet"><span>CRÉDITOS</span><b id="credits">0</b></div>
   </header>

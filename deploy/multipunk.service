@@ -1,0 +1,19 @@
+# systemd: sudo cp deploy/multipunk.service /etc/systemd/system/ && sudo systemctl enable --now multipunk
+[Unit]
+Description=Multipunk (servidor do jogo + salas online)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/multipunk
+Environment=NODE_ENV=production
+Environment=PORT=8765
+# Atrás do nginx, escute só em localhost; sem proxy, use 0.0.0.0
+Environment=HOST=127.0.0.1
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=3
+User=www-data
+
+[Install]
+WantedBy=multi-user.target

@@ -1,46 +1,58 @@
-# Freedivers
+# Multipunk
 
-Shooter 3D de esquadrão, original, solo e 100% offline (three.js incluído em `lib/`).
+Shooter cooperativo 3D no navegador, para jogar **sozinho** ou **online com até 4 jogadores**.
+Cada jogador guarda o próprio progresso (nome, créditos, melhorias, recordes) **no próprio computador**;
+só entra na sala quem tiver o **código do host**.
 
-## Como jogar
-Dê dois cliques em `Jogar.bat` (precisa do Node.js). Ele abre http://127.0.0.1:8765.
+## Jogar sozinho (local)
+Dê dois cliques em `Jogar.bat` (precisa do Node.js) ou rode:
 
-WASD mover em qualquer direção (a mira não muda) · Mouse mirar · Clique atirar
-Shift correr rápido · C andar devagar · R recarregar (também correndo) · Espaço dash · E suprimentos · Esc pausar
+```bash
+npm install --omit=dev
+HOST=127.0.0.1 node server.js     # abre em http://127.0.0.1:8765
+```
 
-## Missões
-1. **Operação Gerador** (campanha): o esquadrão nasce a ~120 m do gerador e atravessa o mapa com pelotões patrulhando
-   (eles te notam por proximidade, tiros e explosões, e alertam os vizinhos); ativa e defende o gerador por 8 ondas;
-   vai à zona de extração (raio de 50 m) e resiste 1:30; a nave pousa, abre a rampa traseira e você embarca.
-   Três reforços (vidas). A tela final mostra a pontuação.
+## Jogar online
+1. Abra o jogo pelo endereço do servidor (não pelo arquivo `index.html`).
+2. Aba **ONLINE** → digite seu nome (ele aparece sobre a sua cabeça).
+3. **Host:** *Criar sala* → aparece um código de 5 letras. Passe-o aos amigos e escolha a operação na aba OPERAÇÕES.
+4. **Amigos:** *Entrar na sala de um amigo* → digitam o código.
+O host roda o mundo (inimigos, pelotões, ondas); cada jogador controla o próprio personagem. A sala fecha para novos jogadores
+enquanto a operação está em andamento. Na operação, o grupo compartilha os 3 reforços e **todos** precisam embarcar na nave.
+
+## Hospedar na sua VPS
+Requisitos: Node.js 18+ e uma porta aberta (ou nginx na frente).
+
+```bash
+git clone https://github.com/DevRaymoond/Freedivers.git /opt/multipunk && cd /opt/multipunk
+npm install --omit=dev
+PORT=8765 node server.js            # escuta em 0.0.0.0 (use HOST=127.0.0.1 atrás de um proxy)
+```
+- `deploy/multipunk.service`: unidade systemd (reinicia sozinha).
+- `deploy/nginx.conf`: proxy com HTTPS e WebSocket em `/ws` (certificado via certbot).
+- Variáveis: `PORT`, `HOST`, `ALLOWED_ORIGINS` (lista de origens permitidas no WebSocket), `DEV=1` (libera `/tools`).
+- `/health` responde `ok`. O servidor só faz o relé das salas: não guarda nada dos jogadores.
+- `node tools/test_relay.js` testa as regras das salas (código, limite de 4, sala travada, saída do host).
+
+## Operações
+1. **Operação Gerador** (campanha, nível 1 = modo relax): você nasce a ~120 m do objetivo e atravessa o mapa com pelotões patrulhando
+   (notam proximidade, tiros e explosões e alertam os vizinhos); defende o gerador por 8 ondas; segura a zona de extração (raio 50 m) por 1:30;
+   a nave pousa, abre a rampa traseira e todos embarcam.
 2. Limpeza do setor (6 ondas de Fibonacci: 5, 8, 13, 21, 34, 55) · 3. Coleta de amostras · 4. Faróis · 5. Defesa do gerador · 6. Extração sob fogo · 7. Rainha da colmeia
+Cada operação seguinte escala vida, quantidade, velocidade, dano e elites dos inimigos.
+
+## Controles
+WASD mover em qualquer direção (a mira não muda) · Mouse mirar · Clique atirar · Shift correr rápido · C andar devagar ·
+R recarregar (também correndo) · Espaço dash · 1/2/3 ou roda do mouse trocam de arma · E suprimentos · Q ataque orbital · Esc menu
+(online o jogo **não** pausa quando você abre o menu).
 
 ## Progressão
-- XP por inimigo; cada nível exige o dobro do anterior. Ao subir de nível há um sorteio às escuras (as chances não aparecem): em geral piora a dificuldade, às vezes dá bônus ou ajuda.
-- Só a primeira operação da lista é nível 1 (modo relax); cada operação seguinte escala vida, quantidade, velocidade, dano e elites dos inimigos.
-- Pontuação (baixa de propósito): missão, tempo, abates, precisão, nível; perde por mortes, suprimentos e orbitais. Rank D–S.
-- Melhorias permanentes: ganhos pequenos e fixos (+1 de dano, +5 de vida...), 500 créditos + 250 por nível.
-- Ataque orbital: ponto central, 6 linhas ao redor em 0,5 s, giram e se fecham, impacto 100 ms depois.
-- Cursor "blob" nos menus (`cursor.js`).
+- XP por inimigo (equipe); cada nível exige o dobro do anterior. Ao subir há um sorteio às escuras: em geral piora a dificuldade, às vezes dá bônus ou ajuda para todos.
+- Pontuação (baixa de propósito): missão, tempo, abates, precisão e nível; perde por mortes, suprimentos e orbitais. Rank D–S. A pontuação é da equipe; os créditos são individuais.
+- Melhorias permanentes (+1 de dano, +5 de vida…): 500 créditos + 250 por nível.
 
-## Próximos passos
-- Mais missões, inimigos e armas
-- Multiplayer cooperativo (por último): `main.js` já separa `tick(dt)` da renderização,
-  o que facilita um modelo host-autoritativo via WebSocket/WebRTC.
-
-## Personagem
-`assets/character.glb` vem de `tools/build_final.py`: usa o "cyberpunk character 3d model(1).glb" (UV, 65 ossos com
-dedos e pesos do próprio arquivo), embute a textura e gera a arma, os carregadores e as animações em camadas:
-- baixo (pernas/quadril): `LowIdle` e `Walk_0..315` / `Run_0..315` (8 direções, misturadas pelo ângulo do movimento)
-- cima (tronco/braços/dedos): `Aim`, `Reload`, `Shoot`, `Hit` — por isso corre em 360° sem tirar a mira da direção e recarrega correndo
-- corpo todo: `Dash`, `Death`
-Os braços usam cinemática inversa para as mãos alcançarem a arma; os dedos fecham no punho/guarda-mão e abrem para pegar o carregador.
-Para refazer:
-`tools\.venv\Scripts\python toolsuild_final.py tools\source\cyber_rigged.glb tools\source	exture.webp assets\character.glb --fix-face`
-(`--fix-face` pinta a pele do rosto, porque o atlas fornecido põe uma grade na ilha da cabeça.)
-Versões anteriores: `build_rigged.py`, `build_cyber.py`, `build_character.py`.
-Visualizador de modelos/animações: `tools/viewer.html?model=../assets/character.glb&anim=Run&t=0.2`.
-
-Pré-visualização: `tools/sheet.html?anim=Run_90+Aim&n=4&yaw=25&cols=4&far=1.0` (poses lado a lado; `+` combina camadas).
-
-Observação: `tools/source/` (modelos e textura originais) não vai para o repositório; coloque seus arquivos lá para regenerar `assets/character.glb`.
+## Estrutura
+- `server.js` servidor estático + relé WebSocket das salas · `net.js` cliente de rede · `main.js` jogo · `cursor.js` cursor "blob"
+- `assets/character.glb` personagem · `lib/` three.js · `tools/` geração do personagem e visualizadores
+- Personagem: `tools/build_final.py` (precisa de Python; `tools/source/` com os modelos originais não vai para o repositório):
+  `python tools/build_final.py tools/source/cyber_rigged.glb tools/source/texture.webp assets/character.glb --fix-face`

@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from './lib/jsm/loaders/GLTFLoader.js';
+import { clone as cloneSkeleton } from './lib/jsm/utils/SkeletonUtils.js';
+import { net } from './net.js';
 
 // ───────────────────────── Configuração ─────────────────────────
 let ARENA_R = 95;
@@ -48,11 +50,11 @@ const UPGRADES = [
 const UPG_MAX = 10;
 const upgCost = l => 500 + 250 * l;
 function loadSave() {
-  try { return Object.assign({ credits: 0, upg: {}, best: {} }, JSON.parse(localStorage.getItem('freedivers_save') || '{}')); }
+  try { return Object.assign({ credits: 0, upg: {}, best: {}, name: '' }, JSON.parse(localStorage.getItem('multipunk_save') || localStorage.getItem('freedivers_save') || '{}')); }
   catch { return { credits: 0, upg: {}, best: {} }; }
 }
 let save = loadSave();
-function persist() { try { localStorage.setItem('freedivers_save', JSON.stringify(save)); } catch { /* sem armazenamento */ } }
+function persist() { try { localStorage.setItem('multipunk_save', JSON.stringify(save)); } catch { /* sem armazenamento */ } }
 const lvl = id => (save.upg && save.upg[id]) || 0;
 const maxHp = () => PLAYER.maxHp + 5 * lvl('hp');
 const reserveCap = w => Math.round(w.reserveMax * (1 + 0.05 * lvl('ammo')));
@@ -111,23 +113,29 @@ scene.add(ground);
 const rocks = [];
 const rockMat = new THREE.MeshStandardMaterial({ color: 0x6b5d4a, roughness: 1, flatShading: true });
 let rockMeshes = [], spireMeshes = [];
-function buildTerrain(R, count, avoid = []) {
+function buildTerrain(R, count, avoid = [], data = null) {
   rockMeshes.forEach(m => scene.remove(m)); spireMeshes.forEach(m => scene.remove(m));
   rockMeshes = []; spireMeshes = []; rocks.length = 0;
   ARENA_R = R;
-  let tries = 0;
-  while (rockMeshes.length < count && tries++ < count * 30) {
-    const r = 1.2 + Math.random() * 2.6;
-    const a = Math.random() * Math.PI * 2;
-    const d = 8 + Math.random() * (R - 14);
-    const x = Math.cos(a) * d, z = Math.sin(a) * d;
-    if (avoid.some(v => Math.hypot(v.x - x, v.z - z) < v.r + r)) continue;
+  const addRock = (x, z, r) => {
     const m = new THREE.Mesh(new THREE.DodecahedronGeometry(r, 0), rockMat);
     m.position.set(x, r * 0.6, z);
     m.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
     m.castShadow = m.receiveShadow = true;
     scene.add(m); rockMeshes.push(m);
     rocks.push({ x, z, r: r * 0.9, y: m.position.y });
+  };
+  if (data) data.forEach(k => addRock(k[0], k[1], k[2] / 0.9));          // mesmas rochas do host
+  else {
+    let tries = 0;
+    while (rockMeshes.length < count && tries++ < count * 30) {
+      const r = 1.2 + Math.random() * 2.6;
+      const a = Math.random() * Math.PI * 2;
+      const d = 8 + Math.random() * (R - 14);
+      const x = Math.cos(a) * d, z = Math.sin(a) * d;
+      if (avoid.some(v => Math.hypot(v.x - x, v.z - z) < v.r + r)) continue;
+      addRock(x, z, r);
+    }
   }
   for (let i = 0; i < 16; i++) {
     const a = Math.random() * Math.PI * 2;
@@ -156,87 +164,93 @@ function applyBiome(name) {
 }
 
 // ───────────────────────── Jogador ─────────────────────────
-const playerGroup = new THREE.Group();
-{
-  const armor = new THREE.MeshStandardMaterial({ color: 0x2f4f6f, roughness: 0.6 });
-  const trim = new THREE.MeshStandardMaterial({ color: 0xffcf3f, roughness: 0.5 });
-  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.4, 0.9, 4, 10), armor);
-  body.position.y = 0.95;
-  const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 10), trim);
-  helmet.position.y = 1.78;
-  const visor = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.1, 0.2), new THREE.MeshStandardMaterial({ color: 0x111111 }));
-  visor.position.set(0, 1.8, -0.22);
-  const gun = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.18, 1.0), new THREE.MeshStandardMaterial({ color: 0x222222 }));
-  gun.position.set(0.32, 1.25, -0.6);
-  [body, helmet, visor, gun].forEach(m => { m.castShadow = true; playerGroup.add(m); });
-}
-scene.add(playerGroup);
-
-// Personagem principal: modelo riggado com dedos (tools/build_final.py). A animação é em camadas:
+// Personagem: modelo riggado com dedos (tools/build_final.py). A animação é em camadas, uma instância ("rig") por jogador:
 //  - baixo (pernas/quadril): LowIdle ou Walk_/Run_ em 8 direções, misturadas pelo ângulo do movimento em relação à mira
 //  - cima (tronco/braços/dedos): Aim, Reload, Shoot, Hit  → o personagem corre em 360° sem tirar a mira da direção
 //  - corpo todo: Dash e Death por cima de tudo
-let mixer = null;
-const actions = {};
-const wts = {};                          // peso suavizado de cada clipe
 const DIRS = [0, 45, 90, 135, 180, 225, 270, 315];
 const ONCE = ['Reload', 'Shoot', 'Hit', 'Dash', 'Death'];
 const LOWER = ['LowIdle', ...['Walk', 'Run'].flatMap(k => DIRS.map(d => `${k}_${d}`))];
 const UPPER = ['Aim', 'Reload', 'Shoot', 'Hit'];
 const NOMINAL = { Run: 7, Walk: 3.4 };   // velocidade (m/s) em que o ciclo de passos está calibrado
-let locoPhase = 0, fullW = 0;
-try {
-  const gltf = await new GLTFLoader().loadAsync('./assets/character.glb');
-  const model = gltf.scene;
+let charAsset = null;
+try { charAsset = await new GLTFLoader().loadAsync('./assets/character.glb'); }
+catch (err) { console.warn('Não foi possível carregar o personagem, usando o modelo simples.', err); }
+
+function makeNameTag(name) {
+  const c = document.createElement('canvas'); c.width = 512; c.height = 96;
+  const g = c.getContext('2d');
+  g.font = '700 54px "Bahnschrift","Segoe UI",sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.lineWidth = 10; g.strokeStyle = 'rgba(0,0,0,.85)'; g.lineJoin = 'round';
+  g.strokeText(name, 256, 50); g.fillStyle = '#ffd27a'; g.fillText(name, 256, 50);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
+  sp.scale.set(2.6, 0.49, 1); sp.position.y = 2.45; sp.renderOrder = 10;
+  return sp;
+}
+function setNameTag(group, name) {
+  if (group.userData.tag) { group.remove(group.userData.tag); group.userData.tag.material.map.dispose(); group.userData.tag.material.dispose(); }
+  group.userData.tag = makeNameTag(name); group.add(group.userData.tag);
+}
+
+function makeCapsuleBody(group) {
+  const armor = new THREE.MeshStandardMaterial({ color: 0x2f4f6f, roughness: 0.6 });
+  const trim = new THREE.MeshStandardMaterial({ color: 0xffcf3f, roughness: 0.5 });
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.4, 0.9, 4, 10), armor); body.position.y = 0.95;
+  const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 10), trim); helmet.position.y = 1.78;
+  [body, helmet].forEach(m => { m.castShadow = true; group.add(m); });
+}
+
+function createRig(group) {
+  const rig = { group, mixer: null, actions: {}, wts: {}, fullW: 0, locoPhase: 0 };
+  if (!charAsset) { makeCapsuleBody(group); return rig; }
+  const model = cloneSkeleton(charAsset.scene);
   model.rotation.y = Math.PI;                    // o modelo olha para +Z; o jogo olha para -Z
   model.traverse(o => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
-  playerGroup.clear();
-  playerGroup.add(model);
-  mixer = new THREE.AnimationMixer(model);
-  for (const clip of gltf.animations) {
-    const a = mixer.clipAction(clip);
+  group.add(model);
+  rig.mixer = new THREE.AnimationMixer(model);
+  for (const clip of charAsset.animations) {
+    const a = rig.mixer.clipAction(clip);
     if (ONCE.includes(clip.name)) { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
     if (/^(Walk|Run)_/.test(clip.name)) a.paused = true;     // o tempo dos passos é controlado por locoPhase
     a.setEffectiveWeight(0);
     a.play();
-    actions[clip.name] = a;
-    wts[clip.name] = 0;
+    rig.actions[clip.name] = a;
+    rig.wts[clip.name] = 0;
   }
-  wts.Aim = 1; wts.LowIdle = 1;
-} catch (err) {
-  console.warn('Não foi possível carregar o personagem, usando o modelo simples.', err);
+  rig.wts.Aim = 1; rig.wts.LowIdle = 1;
+  return rig;
 }
-
-function trigger(name, timeScale = 1) {
-  const a = actions[name];
+const approach = (cur, tgt, dt, rate) => cur + (tgt - cur) * (1 - Math.exp(-dt * rate));
+function triggerRig(rig, name, timeScale = 1) {
+  const a = rig && rig.actions[name];
   if (!a) return;
   a.reset(); a.timeScale = timeScale; a.play();
 }
-const approach = (cur, tgt, dt, rate) => cur + (tgt - cur) * (1 - Math.exp(-dt * rate));
-function resetAnimation() {
-  if (!mixer) return;
-  for (const k in wts) wts[k] = 0;
-  wts.Aim = 1; wts.LowIdle = 1; fullW = 0; locoPhase = 0;
+function resetRig(rig) {
+  if (!rig || !rig.mixer) return;
+  for (const k in rig.wts) rig.wts[k] = 0;
+  rig.wts.Aim = 1; rig.wts.LowIdle = 1; rig.fullW = 0; rig.locoPhase = 0;
 }
-
-function animate(dt) {
-  if (!mixer) return;
-  const dead = state === 'dying';
-  const full = dead || player.rolling > 0;
-  fullW = approach(fullW, full ? 1 : 0, dt, dead ? 10 : player.rolling > 0 ? 30 : 18);
+// S: { dead, rolling, moving, moveKind, moveAlpha, moveScale, reloading, flashing, hit }
+function animateRig(rig, S, dt) {
+  if (!rig || !rig.mixer) return;
+  const { wts, actions } = rig;
+  const dead = !!S.dead;
+  const full = dead || S.rolling;
+  rig.fullW = approach(rig.fullW, full ? 1 : 0, dt, dead ? 10 : S.rolling ? 30 : 18);
 
   // camada de baixo
   const lt = Object.fromEntries(LOWER.map(n => [n, 0]));
-  if (player.moving && !dead) {
-    const kind = player.moveKind, al = player.moveAlpha;
+  if (S.moving && !dead) {
+    const kind = S.moveKind, al = S.moveAlpha;
     const i = Math.floor(al / 45) % 8, j = (i + 1) % 8, fr = (al % 45) / 45;
     lt[`${kind}_${DIRS[i]}`] += 1 - fr; lt[`${kind}_${DIRS[j]}`] += fr;
   } else lt.LowIdle = 1;
   let sum = 0;
   for (const n of LOWER) { wts[n] = approach(wts[n], lt[n], dt, 14); sum += wts[n]; }
   // camada de cima
-  const reloading = player.reloading > 0, flashing = player.flash > 0 && !reloading, hit = player.hitT > 0;
-  const ut = { Reload: reloading ? 1 : 0, Shoot: flashing ? 1 : 0, Hit: hit ? 1 : 0 };
+  const ut = { Reload: S.reloading ? 1 : 0, Shoot: S.flashing && !S.reloading ? 1 : 0, Hit: S.hit ? 1 : 0 };
   ut.Aim = 1 - Math.max(ut.Reload, ut.Shoot, ut.Hit);
   let usum = 0;
   for (const n of UPPER) { wts[n] = approach(wts[n], ut[n], dt, n === 'Aim' ? 12 : 22); usum += wts[n]; }
@@ -246,19 +260,36 @@ function animate(dt) {
   for (const d of DIRS) { wr += wts[`Run_${d}`]; ww += wts[`Walk_${d}`]; }
   if (wr + ww > 0.01) {
     const cps = (wr / 0.62 + ww / 1.1) / (wr + ww);
-    locoPhase = (locoPhase + dt * cps * (player.moveScale || 1)) % 1;
+    rig.locoPhase = (rig.locoPhase + dt * cps * (S.moveScale || 1)) % 1;
   }
 
-  const rest = 1 - fullW;
+  const rest = 1 - rig.fullW;
   for (const n of LOWER) {
     const a = actions[n]; if (!a) continue;
     a.setEffectiveWeight(sum > 0 ? wts[n] / sum * rest : 0);
-    if (n !== 'LowIdle') a.time = locoPhase * a.getClip().duration;
+    if (n !== 'LowIdle') a.time = rig.locoPhase * a.getClip().duration;
   }
   for (const n of UPPER) actions[n].setEffectiveWeight(usum > 0 ? wts[n] / usum * rest : 0);
-  actions.Dash.setEffectiveWeight(dead ? 0 : fullW);
-  actions.Death.setEffectiveWeight(dead ? fullW : 0);
-  mixer.update(dt);
+  actions.Dash.setEffectiveWeight(dead ? 0 : rig.fullW);
+  actions.Death.setEffectiveWeight(dead ? rig.fullW : 0);
+  rig.mixer.update(dt);
+}
+
+// jogador local
+const playerGroup = new THREE.Group();
+scene.add(playerGroup);
+const localRig = createRig(playerGroup);
+const mixer = localRig.mixer;               // compatibilidade: null quando o modelo não carregou
+const actions = localRig.actions, wts = localRig.wts;
+const localEv = { Shoot: 0, Reload: 0, Hit: 0, Dash: 0, Death: 0 };   // contadores enviados aos outros jogadores
+function trigger(name, timeScale = 1) { localEv[name]++; triggerRig(localRig, name, timeScale); }
+function resetAnimation() { resetRig(localRig); }
+function animate(dt) {
+  animateRig(localRig, {
+    dead: state === 'dying' || state === 'downed', rolling: player.rolling > 0, moving: player.moving,
+    moveKind: player.moveKind, moveAlpha: player.moveAlpha, moveScale: player.moveScale,
+    reloading: player.reloading > 0, flashing: player.flash > 0, hit: player.hitT > 0,
+  }, dt);
 }
 
 const player = {
@@ -287,6 +318,18 @@ const checkpoint = new THREE.Vector3();
 let stats = { shots: 0, hits: 0, supplies: 0, orbitals: 0, deaths: 0 };
 let buffs = { dmg: 0, shield: 0 };
 let cinT = 0;
+const others = {};                 // jogadores remotos (por id)
+let uidSeq = 0; const uid = () => ++uidSeq;
+let killsBy = {};                  // abates por jogador (créditos individuais)
+let respawnTimers = {};            // host: id -> segundos para o reforço chegar
+let uiOpen = false;                // menu aberto durante uma partida online (o jogo não pausa)
+let pendingHits = [];              // cliente: tiros que acertaram, enviados ao host junto com o estado
+let waypointHide = 0;              // some a seta quando você já está a menos de X m do ponto (zona de extração)
+let snapT = 0, stateT = 0, partyT = 0;
+const NOKEYS = {};
+const TYPE_LIST = ['crawler', 'spitter', 'brute', 'bomber', 'charger', 'queen'];
+const ST_CODE = { walk: 0, wind: 1, charge: 2, stun: 3 }, ST_NAME = ['walk', 'wind', 'charge', 'stun'];
+const PLANE_ST = ['inbound', 'landed', 'opening', 'open', 'closing', 'takeoff'];
 let pad = null;
 let kills = 0;
 let spawnTimer = 0;
@@ -431,9 +474,10 @@ function spawnEnemy(type, atPos, opts = {}) {
   const mesh = makeEnemyMesh(type);
   let p = atPos;
   if (!p) {
+    const lp = livePlayers(), base = lp.length ? pick(lp).pos : player.pos;
     const a = Math.random() * Math.PI * 2;
-    let d = rand(45, 70);
-    p = new THREE.Vector3(player.pos.x + Math.cos(a) * d, 0, player.pos.z + Math.sin(a) * d);
+    const d = rand(45, 70);
+    p = new THREE.Vector3(base.x + Math.cos(a) * d, 0, base.z + Math.sin(a) * d);
     const len = Math.hypot(p.x, p.z);
     if (len > ARENA_R - 3) p.multiplyScalar((ARENA_R - 3) / len);
   }
@@ -446,7 +490,7 @@ function spawnEnemy(type, atPos, opts = {}) {
   }
   scene.add(mesh);
   const e = {
-    type, t, mesh, hp, maxHp: hp, atkCd: rand(0, 0.5), shootCd: rand(1, 2.5), phase: Math.random() * 6,
+    id: uid(), by: -1, type, t, mesh, hp, maxHp: hp, atkCd: rand(0, 0.5), shootCd: rand(1, 2.5), phase: Math.random() * 6,
     st: 'walk', stT: rand(1.5, 3), volleyCd: 3, summonCd: 10, spd: mods.speed, elite,
     pl: opts.pl || null, wave: opts.wave || 0, alert: !!opts.alert, slot: opts.slot || 0,
   };
@@ -484,6 +528,30 @@ function startDeath() {
   stats.deaths++;
   trigger('Death', actions.Death ? actions.Death.getClip().duration / 1.7 : 1);
   noise(0.4, 0.25, 300);
+  if (net.role === 'client') net.toHost({ k: 'died' }); else onPlayerDied(net.id);
+}
+// host/solo: decide entre reforço (reaparece depois de alguns segundos) e queda definitiva
+function onPlayerDied(id) {
+  const o = others[id];
+  if (mission.livesLeft > 0) { mission.livesLeft--; respawnTimers[id] = 3.5; if (o) o.status = 'respawning'; }
+  else if (o) { o.status = 'downed'; net.to(id, { k: 'downed' }); }
+}
+function respawnPlayer(at) {
+  player.hp = maxHp(); player.pos.copy(at || spawnRing(checkpoint, Math.max(0, net.roster.findIndex(p => p.id === net.id)))); player.invuln = 4; player.hitT = 0;
+  state = 'playing'; resetAnimation(); playerGroup.visible = true;
+  say('Reforço no campo!', 3); beep(660, 0.3, 0.1);
+}
+function hostTimers(dt) {
+  for (const id of Object.keys(respawnTimers)) {
+    respawnTimers[id] -= dt;
+    if (respawnTimers[id] > 0) continue;
+    delete respawnTimers[id];
+    const idx = Math.max(0, net.roster.findIndex(p => p.id === +id));
+    if (+id === net.id) respawnPlayer();
+    else { const o = others[id]; if (o) { o.status = 'alive'; const p = spawnRing(checkpoint, idx); net.to(+id, { k: 'respawn', x: p.x, z: p.z }); } }
+  }
+  // fim de jogo: ninguém vivo, nenhum reforço a caminho
+  if (state !== 'dying' && livePlayers().length === 0 && !Object.keys(respawnTimers).length && !(state === 'cinematic')) endMission(false);
 }
 
 function makeGenerator(x, z) {
@@ -506,7 +574,7 @@ function damageGenerator(n) {
   generator.hp -= n * (relax ? 0.45 : 0.7);
   generator.core.material.emissive.set(0xff3030);
   setTimeout(() => generator && generator.core.material.emissive.set(0x2290c0), 120);
-  if (generator.hp <= 0) { generator.hp = 0; say('O gerador caiu!', 3); endMission(false); }
+  if (generator.hp <= 0) { generator.hp = 0; sayAll('O gerador caiu!', 3); endMission(false); }
 }
 
 function addFlash(pos, radius, color) {
@@ -515,34 +583,50 @@ function addFlash(pos, radius, color) {
   scene.add(m);
   flashes.push({ m, t: 0.4, max: 0.4, radius });
 }
-function explode(pos, radius, playerDmg, enemyDmg) {
+function boomFx(pos, radius) {
   addFlash(pos, radius, 0xffa040);
   burst(pos.clone().setY(1), 0xffa040, 30, 9);
-  noise(0.35, 0.3, 700);
-  shake = Math.max(shake, 0.5);
+  const d = Math.hypot(player.pos.x - pos.x, player.pos.z - pos.z);
+  if (d < 60) { noise(0.35, 0.3, 700); shake = Math.max(shake, 0.5 * (1 - d / 60)); }
+}
+function explode(pos, radius, playerDmg, enemyDmg) {
+  boomFx(pos, radius);
+  net.all({ k: 'fx', t: 'boom', x: pos.x, z: pos.z, r: radius });
   alertNear(pos, 80);
-  const dp = Math.hypot(player.pos.x - pos.x, player.pos.z - pos.z);
-  if (dp < radius) damagePlayer(playerDmg * (1 - 0.5 * dp / radius));
+  for (const p of livePlayers()) {
+    const dp = Math.hypot(p.pos.x - pos.x, p.pos.z - pos.z);
+    if (dp < radius) hurtPlayer(p.id, playerDmg * (1 - 0.5 * dp / radius));
+  }
   if (generator && Math.hypot(generator.x - pos.x, generator.z - pos.z) < radius + 2.5) damageGenerator(playerDmg * 2);
   for (const o of [...enemies]) {
-    if (o.mesh.position.distanceTo(pos) < radius) damageEnemy(o, enemyDmg);
+    if (o.mesh.position.distanceTo(pos) < radius) damageEnemy(o, enemyDmg, -1);
   }
 }
 
-function damageEnemy(e, amount) {
+const pendingFlag = { shot: false };
+function damageEnemy(e, amount, by = net.id) {
+  if (net.role === 'client') {                    // o cliente só informa o acerto; o host aplica o dano
+    pendingHits.push([e.id, Math.round(amount)]); e.hp -= amount; return;
+  }
   if (!enemies.includes(e)) return;
   if (e.pl && e.pl.state === 'patrol') alertPlatoon(e.pl);
+  e.by = by;
   e.hp -= amount;
   if (e.hp <= 0) killEnemy(e);
 }
 
+function addDrop(id, type, x, z) {
+  const m = new THREE.Mesh(new THREE.OctahedronGeometry(0.32), new THREE.MeshBasicMaterial({ color: type === 'hp' ? 0x5ce08a : 0xffcf3f }));
+  m.position.set(x, 0.7, z);
+  scene.add(m);
+  drops.push({ id, m, type, t: 22 });
+}
+function removeDrop(d) { scene.remove(d.m); const i = drops.indexOf(d); if (i >= 0) drops.splice(i, 1); }
 function maybeDrop(pos) {
   if (Math.random() > 0.14) return;
-  const type = Math.random() < 0.5 ? 'hp' : 'ammo';
-  const m = new THREE.Mesh(new THREE.OctahedronGeometry(0.32), new THREE.MeshBasicMaterial({ color: type === 'hp' ? 0x5ce08a : 0xffcf3f }));
-  m.position.copy(pos).setY(0.7);
-  scene.add(m);
-  drops.push({ m, type, t: 22 });
+  const type = Math.random() < 0.5 ? 'hp' : 'ammo', id = uid();
+  addDrop(id, type, pos.x, pos.z);
+  net.all({ k: 'drop', id, type, x: pos.x, z: pos.z });
 }
 
 function killEnemy(e) {
@@ -551,12 +635,39 @@ function killEnemy(e) {
   scene.remove(e.mesh);
   enemies.splice(enemies.indexOf(e), 1);
   kills++;
+  killsBy[e.by] = (killsBy[e.by] || 0) + 1;
   $('kills').textContent = 'Abates: ' + kills;
   if (e.type === 'bomber') explode(e.mesh.position, 5.5, 35, 70);
   else maybeDrop(e.mesh.position);
   addXp((XP_VALUES[e.type] || 5) * (e.elite ? 2 : 1));
   mission.onKill?.(e);
 }
+
+// ───────────────────────── Equipe ─────────────────────────
+// No host (e no solo) a simulação enxerga todos os jogadores vivos: o local e os remotos.
+const localAlive = () => state === 'playing' || state === 'loot';
+function livePlayers() {
+  const arr = [];
+  if (localAlive()) arr.push({ id: net.id, pos: player.pos, sprinting: !!player.sprinting, walk: !!keys.KeyC && !player.sprinting, local: true });
+  for (const o of Object.values(others)) if (o.status === 'alive') arr.push({ id: o.id, pos: o.pos, sprinting: !!o.st.sp, walk: !!o.st.wk, local: false });
+  return arr;
+}
+function nearestLive(pos) {
+  let b = null, bd = 1e9;
+  for (const p of livePlayers()) { const d = Math.hypot(p.pos.x - pos.x, p.pos.z - pos.z); if (d < bd) { bd = d; b = p; } }
+  return b;
+}
+function teamCenter() {
+  const L = livePlayers();
+  if (!L.length) return player.pos.clone().setY(0);
+  const c = new THREE.Vector3(); L.forEach(p => c.add(p.pos));
+  return c.multiplyScalar(1 / L.length).setY(0);
+}
+const anyLiveNear = (pt, r) => livePlayers().some(p => Math.hypot(p.pos.x - pt.x, p.pos.z - pt.z) < r);
+const minLiveDist = pt => livePlayers().reduce((m, p) => Math.min(m, Math.hypot(p.pos.x - pt.x, p.pos.z - pt.z)), 1e9);
+function hurtPlayer(pid, n) { if (pid === net.id) damagePlayer(n); else net.to(pid, { k: 'dmg', n }); }
+function sayAll(text, secs = 2.5) { say(text, secs); net.all({ k: 'say', text, secs }); }
+const spawnRing = (base, i) => base.clone().add(new THREE.Vector3(Math.cos(i * 1.6) * (i ? 2.6 : 0), 0, Math.sin(i * 1.6) * (i ? 2.6 : 0)));
 
 // ───────────────────────── Pelotões (grupos de patrulha) ─────────────────────────
 // Lógica própria: um pelotão é uma âncora que percorre pontos do mapa com os membros em formação.
@@ -582,7 +693,7 @@ function alertPlatoon(pl, depth = 0) {
   if (pl.state === 'alert') return;
   pl.state = 'alert';
   pl.members.forEach(e => { e.alert = true; });
-  if (elapsed - lastAlertMsg > 4) { lastAlertMsg = elapsed; say('Pelotão inimigo alertado!', 1.6); beep(160, 0.25, 0.08); }
+  if (elapsed - lastAlertMsg > 4) { lastAlertMsg = elapsed; sayAll('Pelotão inimigo alertado!', 1.6); beep(160, 0.25, 0.08); }
   if (depth < 2) for (const o of platoons) {
     if (o.state === 'patrol' && o.anchor.distanceTo(pl.anchor) < 36) alertPlatoon(o, depth + 1);
   }
@@ -592,6 +703,7 @@ function alertNear(pos, radius) {
   for (const pl of platoons) if (pl.state === 'patrol' && Math.hypot(pl.anchor.x - pos.x, pl.anchor.z - pos.z) < radius) alertPlatoon(pl);
 }
 function updatePlatoons(dt) {
+  const live = livePlayers();
   for (const pl of [...platoons]) {
     pl.members = pl.members.filter(e => enemies.includes(e));
     if (!pl.members.length) { platoons.splice(platoons.indexOf(pl), 1); continue; }
@@ -601,8 +713,10 @@ function updatePlatoons(dt) {
       if (d < 2) pl.wi = (pl.wi + 1) % pl.wps.length;
       else { pl.anchor.x += dx / d * pl.speed * dt; pl.anchor.z += dz / d * pl.speed * dt; pl.heading = Math.atan2(dx, dz); }
     }
-    const reach = PL_DETECT * (player.sprinting ? 1.35 : keys.KeyC ? 0.65 : 1);
-    if (pl.members.some(e => e.mesh.position.distanceTo(player.pos) < reach)) alertPlatoon(pl);
+    for (const p of live) {                                  // qualquer jogador pode chamar a atenção do pelotão
+      const reach = PL_DETECT * (p.sprinting ? 1.35 : p.walk ? 0.65 : 1);
+      if (pl.members.some(e => e.mesh.position.distanceTo(p.pos) < reach)) { alertPlatoon(pl); break; }
+    }
   }
 }
 
@@ -621,19 +735,19 @@ const LOOT = {
     { name: 'Frenesi', desc: 'Inimigos 10% mais rápidos', apply: () => { mods.speed *= 1.1; } },
     { name: 'Presas afiadas', desc: 'Inimigos causam +15% de dano', apply: () => { mods.edmg *= 1.15; } },
     { name: 'Casta de elite', desc: '+12% de chance de inimigos elite (vida x2,4)', apply: () => { mods.elite += 0.12; } },
-    { name: 'Emboscada!', desc: 'Um pelotão ataca você agora', apply: () => ambush() },
+    { name: 'Emboscada!', desc: 'Um pelotão ataca a equipe agora', apply: () => ambush() },
   ],
   buff: [
-    { name: 'Fúria de combate', desc: '+25% de dano por 40 segundos', apply: () => { buffs.dmg = 40; } },
-    { name: 'Escudo de energia', desc: 'Absorve 60 de dano', apply: () => { buffs.shield = 60; } },
-    { name: 'Estimulante', desc: 'Vida totalmente restaurada', apply: () => { player.hp = maxHp(); } },
-    { name: 'Munição cheia', desc: 'Todas as armas recarregadas', apply: () => refillAmmo() },
+    { name: 'Fúria de combate', desc: '+25% de dano por 40 segundos', apply: () => teamBuff('dmg') },
+    { name: 'Escudo de energia', desc: 'Absorve 60 de dano', apply: () => teamBuff('shield') },
+    { name: 'Estimulante', desc: 'Vida totalmente restaurada', apply: () => teamBuff('heal') },
+    { name: 'Munição cheia', desc: 'Todas as armas recarregadas', apply: () => teamBuff('ammo') },
   ],
   help: [
     { name: 'Torre automática', desc: 'Uma torre defende a área por 40 segundos', apply: () => dropTurret() },
     { name: 'Caixa de suprimentos', desc: 'Cai munição e vida perto de você', apply: () => dropSupplyNear() },
-    { name: 'Orbital liberado', desc: 'Ataque orbital pronto agora', apply: () => { player.strikeCd = 0; } },
-    { name: 'Reparos', desc: 'Gerador +30% (ou vida cheia sem gerador)', apply: () => { if (generator && generator.hp > 0) generator.hp = Math.min(generator.max, generator.hp + generator.max * 0.3); else player.hp = maxHp(); } },
+    { name: 'Orbital liberado', desc: 'Ataque orbital pronto agora', apply: () => teamBuff('orb') },
+    { name: 'Reparos', desc: 'Gerador +30% (ou vida cheia sem gerador)', apply: () => { if (generator && generator.hp > 0) generator.hp = Math.min(generator.max, generator.hp + generator.max * 0.3); else teamBuff('heal'); } },
   ],
 };
 const LOOT_LABEL = { diff: 'Aumento de dificuldade', buff: 'Bônus de combate', help: 'Ajuda no mapa' };
@@ -643,8 +757,18 @@ function startLoot() {
   state = 'loot'; mouseDown = false;
   const r = Math.random();
   const kind = r < 0.7 ? 'diff' : r < 0.9 ? 'buff' : 'help';
-  lootRun = { kind, item: pick(LOOT[kind]), t: 0, flick: 0, shown: false };
+  const item = pick(LOOT[kind]);
+  lootRun = { kind, item, t: 0, flick: 0, shown: false, remote: false };
+  net.all({ k: 'loot', kind, name: item.name, desc: item.desc, lv: level });
   $('lootLvl').textContent = `NÍVEL ${level}`;
+  $('loot').classList.add('on');
+  $('lootCard').className = 'loot-card spin';
+  beep(520, 0.15); beep(780, 0.2);
+}
+function startLootRemote(d) {                    // cliente: só mostra a roleta; os efeitos vêm do host
+  state = 'loot'; mouseDown = false;
+  lootRun = { kind: d.kind, item: { name: d.name, desc: d.desc, apply: () => {} }, t: 0, flick: 0, shown: false, remote: true };
+  $('lootLvl').textContent = `NÍVEL ${d.lv}`;
   $('loot').classList.add('on');
   $('lootCard').className = 'loot-card spin';
   beep(520, 0.15); beep(780, 0.2);
@@ -666,15 +790,23 @@ function updateLoot(dt) {
     $('lootKind').textContent = LOOT_LABEL[L.kind]; $('lootName').textContent = L.item.name; $('lootDesc').textContent = L.item.desc;
     $('lootCard').className = 'loot-card ' + L.kind;
     beep(L.kind === 'diff' ? 140 : 880, 0.4, 0.1);
-    L.item.apply();
-    refreshMods();
+    if (!L.remote) { L.item.apply(); refreshMods(); }
   }
   if (L.t >= TOTAL) {
     $('loot').classList.remove('on');
     lootRun = null; state = 'playing';
-    if (pendingLoot > 0) startLoot();
+    if (!L.remote && pendingLoot > 0) startLoot();
   }
 }
+// efeitos que valem para todos os jogadores: cada máquina aplica o seu
+function applyBuff(id) {
+  if (id === 'dmg') buffs.dmg = 40;
+  else if (id === 'shield') buffs.shield = 60;
+  else if (id === 'heal') player.hp = maxHp();
+  else if (id === 'ammo') refillAmmo();
+  else if (id === 'orb') player.strikeCd = 0;
+}
+function teamBuff(id) { applyBuff(id); net.all({ k: 'buff', id }); }
 function refreshMods() {
   const rows = [];
   const pct = v => `${v >= 1 ? '+' : ''}${Math.round((v - 1) * 100)}%`;
@@ -695,22 +827,28 @@ function refillAmmo() {
   });
 }
 function ambush() {
-  const a = rand(0, Math.PI * 2), c = player.pos.clone().add(new THREE.Vector3(Math.cos(a) * 24, 0, Math.sin(a) * 24));
+  const lp = livePlayers(), base = lp.length ? pick(lp).pos : player.pos;
+  const a = rand(0, Math.PI * 2), c = base.clone().add(new THREE.Vector3(Math.cos(a) * 24, 0, Math.sin(a) * 24));
   const types = []; const n = Math.round(6 * mods.count);
   for (let i = 0; i < n; i++) types.push(i % 4 === 3 ? 'spitter' : 'crawler');
   makePlatoon(c, types, { alert: true });
 }
-function dropSupplyNear() {
-  const a = rand(0, Math.PI * 2);
-  const target = player.pos.clone().add(new THREE.Vector3(Math.cos(a) * 6, 0, Math.sin(a) * 6));
+function addCrate(id, x, z) {
   const g = new THREE.Group();
   const box = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.2, 1.2), new THREE.MeshStandardMaterial({ color: 0x3a7a3a }));
+  box.castShadow = true;
   const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 40, 6, 1, true), new THREE.MeshBasicMaterial({ color: 0x5ce08a, transparent: true, opacity: 0.5 }));
-  beam.position.y = 20; g.add(box, beam); g.position.copy(target); box.position.y = 30; scene.add(g);
-  crates.push({ g, box, landed: false, t: 0 });
+  beam.position.y = 20;
+  g.add(box, beam); g.position.set(x, 0, z); box.position.y = 30; scene.add(g);
+  crates.push({ id, g, box, landed: false, t: 0 });
 }
-function dropTurret() {
-  const a = rand(0, Math.PI * 2), pos = player.pos.clone().add(new THREE.Vector3(Math.cos(a) * 4, 0, Math.sin(a) * 4));
+function removeCrate(c) { scene.remove(c.g); const i = crates.indexOf(c); if (i >= 0) crates.splice(i, 1); }
+function hostAddCrate(x, z) { const id = uid(); addCrate(id, x, z); net.all({ k: 'crate', id, x, z }); }
+function dropSupplyNear() {
+  const lp = livePlayers(), base = lp.length ? pick(lp).pos : player.pos, a = rand(0, Math.PI * 2);
+  hostAddCrate(base.x + Math.cos(a) * 6, base.z + Math.sin(a) * 6);
+}
+function addTurret(id, x, z, life = 40) {
   const g = new THREE.Group();
   const base = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.8, 0.8, 8), new THREE.MeshStandardMaterial({ color: 0x3b4450, metalness: 0.5 }));
   base.position.y = 0.4;
@@ -719,23 +857,30 @@ function dropTurret() {
   const gun = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 1.1), new THREE.MeshStandardMaterial({ color: 0x222831 }));
   gun.position.set(0, 1.15, -0.8);
   const pivot = new THREE.Group(); pivot.add(head, gun); g.add(base, pivot);
-  g.position.copy(pos); scene.add(g);
-  turrets.push({ g, pivot, t: 40, cd: 0 });
+  g.position.set(x, 0, z); scene.add(g);
+  turrets.push({ id, g, pivot, t: life, cd: 0 });
+}
+function dropTurret() {
+  const lp = livePlayers(), base = lp.length ? pick(lp).pos : player.pos, a = rand(0, Math.PI * 2);
+  const x = base.x + Math.cos(a) * 4, z = base.z + Math.sin(a) * 4, id = uid();
+  addTurret(id, x, z); net.all({ k: 'turret', id, x, z });
 }
 function updateTurrets(dt) {
   for (const T of [...turrets]) {
     T.t -= dt; T.cd -= dt;
-    let best = null, bd = 38;
-    for (const e of enemies) { const d = e.mesh.position.distanceTo(T.g.position); if (d < bd) { bd = d; best = e; } }
-    if (best) {
-      T.pivot.rotation.y = Math.atan2(-(best.mesh.position.x - T.g.position.x), -(best.mesh.position.z - T.g.position.z));
-      if (T.cd <= 0) {
-        T.cd = 0.16;
-        const from = T.g.position.clone().setY(1.2), to = best.mesh.position.clone().setY(best.t.height);
-        addTracer(from, to); damageEnemy(best, 7);
+    if (net.role !== 'client') {                          // só o host atira; clientes apenas mostram a torre
+      let best = null, bd = 38;
+      for (const e of enemies) { const d = e.mesh.position.distanceTo(T.g.position); if (d < bd) { bd = d; best = e; } }
+      if (best) {
+        T.pivot.rotation.y = Math.atan2(-(best.mesh.position.x - T.g.position.x), -(best.mesh.position.z - T.g.position.z));
+        if (T.cd <= 0) {
+          T.cd = 0.16;
+          const from = T.g.position.clone().setY(1.2), to = best.mesh.position.clone().setY(best.t.height);
+          addTracer(from, to); damageEnemy(best, 7, -1);
+        }
       }
     }
-    if (T.t <= 0) { scene.remove(T.g); turrets.splice(turrets.indexOf(T), 1); }
+    if (T.t <= 0) { scene.remove(T.g); turrets.splice(turrets.indexOf(T), 1); if (net.role === 'host') net.all({ k: 'turretGone', id: T.id }); }
   }
 }
 
@@ -823,7 +968,7 @@ function spawnWave(op, n) {
     spawnEnemy('brute', clampArena(new THREE.Vector3(generator.x + Math.cos(ang) * 64, 0, generator.z + Math.sin(ang) * 64)), { wave: n, alert: true, hpMul });
   }
   op.waveSize = Math.max(1, enemies.filter(e => e.wave === n).length);
-  say(`ONDA ${n} / ${op.waves}`, 3); beep(200, 0.4, 0.1);
+  sayAll(`ONDA ${n} / ${op.waves}`, 3); beep(200, 0.4, 0.1);
 }
 function spawnReinforcement() {
   if (enemies.length > 32) return;
@@ -834,7 +979,7 @@ function spawnReinforcement() {
     const n = Math.round((7 + level) * mods.count * 0.5);
     makePlatoon(c, waveTypes(8, n), { alert: true, wave: 99, hpMul: 1.5 });
   }
-  say('Reforços inimigos!', 1.8);
+  sayAll('Reforços inimigos!', 1.8);
 }
 
 function makePlane() {
@@ -874,19 +1019,24 @@ function resolvePlane(pos) {
   }
 }
 
+function localBoardingCheck() {
+  if (!plane || plane.state !== 'open') { player.boarded = false; return; }
+  const l = planeLocal(player.pos);
+  if (Math.abs(l.x) < 2.4 && l.z > 8.6 && l.z < 15) plane.rampVisited = true;
+  player.boarded = !!(plane.rampVisited && Math.abs(l.x) < 2.4 && l.z > -4 && l.z < 8.6);
+}
 function updateOperation(m, dt) {
-  const op = m.op, L = opLayout, P = player.pos;
-  const hd = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
+  const op = m.op, L = opLayout;
   const gpct = () => Math.max(0, Math.round(generator.hp / generator.max * 100));
   if (op.phase === 'travel') {
-    waypoint = L.G;
-    const d = hd(P, L.G);
+    waypoint = L.G; waypointHide = 0;
+    const d = Math.min(9999, minLiveDist(L.G));
     m.text = `Chegue ao gerador: ${Math.round(d)} m — evite ou enfrente os pelotões`;
     m.progress = Math.max(0, 1 - d / op.travelTotal);
     if (d < 16) {
       op.phase = 'defend'; op.countdown = 8; generator.active = true;
       checkpoint.copy(L.G).add(new THREE.Vector3(8, 0, 8));
-      say('Gerador alcançado! Defenda-o: a primeira onda chega em 8 s.', 4);
+      sayAll('Gerador alcançado! Defenda-o: a primeira onda chega em 8 s.', 4);
     }
   } else if (op.phase === 'defend') {
     waypoint = null;
@@ -905,14 +1055,14 @@ function updateOperation(m, dt) {
           const geo = new THREE.TorusGeometry(50, 0.35, 6, 120);
           zoneRing = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xf28c1f }));
           zoneRing.rotation.x = Math.PI / 2; zoneRing.position.set(L.E.x, 0.3, L.E.z); scene.add(zoneRing);
-          say('Gerador estável! Siga para a zona de extração.', 4);
-        } else { op.countdown = 10; say(`Onda ${op.wave} contida! Próxima em 10 s.`, 2.5); }
+          sayAll('Gerador estável! Siga para a zona de extração.', 4);
+        } else { op.countdown = 10; sayAll(`Onda ${op.wave} contida! Próxima em 10 s.`, 2.5); }
       }
     }
   } else if (op.phase === 'extract') {
-    const d = hd(P, L.E), inside = d < 50;
-    waypoint = inside ? null : L.E;
-    if (inside && !op.zoneIn) { op.zoneIn = true; checkpoint.copy(L.E); say('Segure a zona por 1:30!', 3); }
+    const d = Math.min(9999, minLiveDist(L.E)), inside = anyLiveNear(L.E, 50);
+    waypoint = L.E; waypointHide = 50;
+    if (inside && !op.zoneIn) { op.zoneIn = true; checkpoint.copy(L.E); sayAll('Segure a zona por 1:30!', 3); }
     zoneRing.material.color.set(inside ? 0x4cd68a : 0xf28c1f);
     if (inside) op.exT += dt;
     m.text = inside ? `Segure a zona de extração: ${fmtTime(op.exNeed - op.exT)}` : `Vá à zona de extração: ${Math.round(d)} m (o tempo só corre dentro dela)`;
@@ -927,7 +1077,7 @@ function updateOperation(m, dt) {
       plane.start.copy(plane.land).addScaledVector(fwd, -260).setY(85);
       plane.g.rotation.y = plane.yaw;
       plane.g.position.copy(plane.start);
-      say('A nave de extração está chegando!', 4); beep(180, 0.6, 0.12);
+      sayAll('A nave de extração está chegando!', 4); beep(180, 0.6, 0.12);
     }
   } else if (op.phase === 'plane') {
     plane.t += dt;
@@ -944,17 +1094,20 @@ function updateOperation(m, dt) {
     } else if (pl.state === 'opening') {
       const u = Math.min(1, pl.t / 2.5);
       pl.ramp.rotation.x = -Math.PI / 2 + (Math.PI / 2 + 0.22) * (u * u * (3 - 2 * u));
-      if (u >= 1) { pl.state = 'open'; say('Rampa aberta! Entre na nave pela traseira!', 4); beep(660, 0.3, 0.1); }
+      if (u >= 1) { pl.state = 'open'; sayAll('Rampa aberta! Entre na nave pela traseira!', 4); beep(660, 0.3, 0.1); }
       m.text = 'Abrindo a rampa traseira…';
     } else if (pl.state === 'open') {
-      waypoint = pl.g.position;
-      const l = planeLocal(P);
-      if (Math.abs(l.x) < 2.4 && l.z > 8.6 && l.z < 15) pl.rampVisited = true;
-      m.text = pl.rampVisited ? 'Entre na cabine!' : `Entre na nave pela rampa traseira — ${Math.round(hd(P, pl.g.position))} m`;
-      if (pl.rampVisited && Math.abs(l.x) < 2.4 && l.z > -4 && l.z < 8.6) {
+      waypoint = pl.g.position; waypointHide = 0;
+      localBoardingCheck();
+      const liveOthers = Object.values(others).filter(o => o.status === 'alive');
+      const boardedN = (player.boarded ? 1 : 0) + liveOthers.filter(o => o.bd).length;
+      const totalN = (localAlive() ? 1 : 0) + liveOthers.length;
+      m.text = totalN > 1 ? `Todos precisam embarcar pela rampa traseira: ${boardedN}/${totalN} a bordo` :
+        (pl.rampVisited ? 'Entre na cabine!' : `Entre na nave pela rampa traseira — ${Math.round(minLiveDist(pl.g.position))} m`);
+      if (totalN > 0 && boardedN === totalN) {
         pl.state = 'closing'; pl.t = 0; state = 'cinematic'; cinT = 0; waypoint = null;
         playerGroup.visible = false; mouseDown = false;
-        say('Todos a bordo!', 3);
+        sayAll('Todos a bordo!', 3);
       }
     }
   }
@@ -962,20 +1115,23 @@ function updateOperation(m, dt) {
 
 function updateCinematic(dt) {
   cinT += dt; const pl = plane;
-  if (pl.state === 'closing') {
-    pl.t += dt;
-    const u = Math.min(1, pl.t / 2);
-    pl.ramp.rotation.x = 0.22 - (Math.PI / 2 + 0.22) * (u * u * (3 - 2 * u));
-    if (u >= 1) { pl.state = 'takeoff'; pl.t = 0; noise(0.8, 0.3, 200); }
-  } else if (pl.state === 'takeoff') {
-    pl.t += dt;
-    const fwd = new THREE.Vector3(-Math.sin(pl.yaw), 0, -Math.cos(pl.yaw));
-    pl.g.position.y += (1.5 * pl.t * pl.t + 2) * dt * 3;
-    pl.g.position.addScaledVector(fwd, pl.t * pl.t * 3 * dt);
-    pl.g.rotation.x = Math.min(0.28, pl.t * 0.08);
-    if (pl.t > 5.0) $('fade').style.opacity = 1;
-    if (pl.t > 6.4) endMission(true);
-  }
+  if (!pl) return;
+  if (net.role !== 'client') {                       // o host (ou solo) conduz a animação; clientes só assistem
+    if (pl.state === 'closing') {
+      pl.t += dt;
+      const u = Math.min(1, pl.t / 2);
+      pl.ramp.rotation.x = 0.22 - (Math.PI / 2 + 0.22) * (u * u * (3 - 2 * u));
+      if (u >= 1) { pl.state = 'takeoff'; pl.t = 0; noise(0.8, 0.3, 200); }
+    } else if (pl.state === 'takeoff') {
+      pl.t += dt;
+      const fwd = new THREE.Vector3(-Math.sin(pl.yaw), 0, -Math.cos(pl.yaw));
+      pl.g.position.y += (1.5 * pl.t * pl.t + 2) * dt * 3;
+      pl.g.position.addScaledVector(fwd, pl.t * pl.t * 3 * dt);
+      pl.g.rotation.x = Math.min(0.28, pl.t * 0.08);
+      if (pl.t > 5.0) $('fade').style.opacity = 1;
+      if (pl.t > 6.4) endMission(true);
+    }
+  } else if (pl.state === 'takeoff' && pl.g.position.y > 40) $('fade').style.opacity = 1;
   const a = pl.yaw + 2.2 + cinT * 0.12, dist = 44;
   camera.position.set(pl.g.position.x + Math.sin(a) * dist, pl.g.position.y + 12, pl.g.position.z + Math.cos(a) * dist);
   camera.lookAt(pl.g.position.x, pl.g.position.y + 3, pl.g.position.z);
@@ -999,21 +1155,21 @@ function buildMission(id) {
           const groups = count >= 13 ? 3 : count >= 8 ? 2 : 1, base = rand(0, Math.PI * 2);
           for (let g = 0; g < groups; g++) {
             const ang = base + g * (Math.PI * 2 / groups), n = Math.floor(count / groups) + (g < count % groups ? 1 : 0);
-            const c = clampArena(player.pos.clone().add(new THREE.Vector3(Math.cos(ang) * rand(44, 58), 0, Math.sin(ang) * rand(44, 58))));
+            const c = clampArena(teamCenter().add(new THREE.Vector3(Math.cos(ang) * rand(44, 58), 0, Math.sin(ang) * rand(44, 58))));
             makePlatoon(c, waveTypes(w.wave + 1, n), { alert: true, wave: w.wave, hpMul });
           }
           // o sorteio "mais inimigos" não muda a sequência: vira um reforço que chega depois, na mesma onda
           w.extra = mods.count > 1.01 ? Math.round(count * (mods.count - 1)) : 0; w.extraT = 9;
           w.size = Math.max(1, enemies.filter(e => e.wave === w.wave).length);
-          say(`ONDA ${w.wave} / ${total} — ${count} inimigos`, 3); beep(200, 0.4, 0.1);
+          sayAll(`ONDA ${w.wave} / ${total} — ${count} inimigos`, 3); beep(200, 0.4, 0.1);
         }
       } else {
         if (w.extra > 0) {
           w.extraT -= dt;
           if (w.extraT <= 0) {
-            const a = rand(0, Math.PI * 2), c = clampArena(player.pos.clone().add(new THREE.Vector3(Math.cos(a) * 50, 0, Math.sin(a) * 50)));
+            const a = rand(0, Math.PI * 2), c = clampArena(teamCenter().add(new THREE.Vector3(Math.cos(a) * 50, 0, Math.sin(a) * 50)));
             makePlatoon(c, waveTypes(w.wave + 1, w.extra), { alert: true, wave: w.wave, hpMul: 1 + 0.06 * (w.wave - 1) });
-            w.size += w.extra; w.extra = 0; say('Reforços do enxame!', 2);
+            w.size += w.extra; w.extra = 0; sayAll('Reforços do enxame!', 2);
           }
         }
         const alive = enemies.filter(e => e.wave === w.wave).length;
@@ -1022,7 +1178,7 @@ function buildMission(id) {
         if (alive === 0) {
           w.active = false;
           if (w.wave >= total) endMission(true);
-          else { w.countdown = 7; say(`Onda ${w.wave} limpa! Próxima: ${m.fib[w.wave]} inimigos.`, 2.5); }
+          else { w.countdown = 7; sayAll(`Onda ${w.wave} limpa! Próxima: ${m.fib[w.wave]} inimigos.`, 2.5); }
         }
       }
     };
@@ -1042,9 +1198,9 @@ function buildMission(id) {
       for (const p of pods) {
         if (p.got) continue;
         p.cap.rotation.y = elapsed * 2; p.cap.position.y = 1.0 + 0.15 * Math.sin(elapsed * 3);
-        if (Math.hypot(player.pos.x - p.x, player.pos.z - p.z) < 2.6) {
+        if (anyLiveNear(p, 2.6)) {
           p.got = true; scene.remove(p.g); m.got++;
-          say(`Amostra ${m.got}/${m.total} coletada — o enxame sentiu!`, 2.5); beep(900, 0.2);
+          sayAll(`Amostra ${m.got}/${m.total} coletada — o enxame sentiu!`, 2.5); beep(900, 0.2);
           for (let k = 0; k < 4 + m.got; k++) {
             const a = rand(0, Math.PI * 2), d = rand(20, 30);
             spawnEnemy(k % 5 === 4 ? 'bomber' : 'crawler', new THREE.Vector3(p.x + Math.cos(a) * d, 0, p.z + Math.sin(a) * d));
@@ -1069,9 +1225,9 @@ function buildMission(id) {
       let done = 0, best = 0;
       for (const b of beacons) {
         if (!b.done) {
-          const inside = Math.hypot(player.pos.x - b.x, player.pos.z - b.z) < 6;
+          const inside = anyLiveNear(b, 6);
           b.progress = Math.max(0, Math.min(1, b.progress + (inside ? dt / 10 : -dt / 25)));
-          if (b.progress >= 1) { b.done = true; b.ring.material.color.set(0x5ce08a); b.col.material.color.set(0x5ce08a); say('Farol ativado!'); beep(880, 0.3); }
+          if (b.progress >= 1) { b.done = true; b.ring.material.color.set(0x5ce08a); b.col.material.color.set(0x5ce08a); sayAll('Farol ativado!'); beep(880, 0.3); }
           best = Math.max(best, b.progress);
         }
         if (b.done) done++;
@@ -1097,8 +1253,8 @@ function buildMission(id) {
     generator = makeGenerator(0, -14); generator.active = true;
     m.update = () => {
       const left = Math.max(0, m.duration - elapsed);
-      if (elapsed > 40 && !m.ev.c) { m.ev.c = 1; say('Investidores a caminho!', 3); for (let i = 0; i < 2; i++) spawnEnemy('charger'); }
-      if (elapsed > 80 && !m.ev.b) { m.ev.b = 1; say('Um brutamontes se aproxima do gerador!', 3); spawnEnemy('brute'); }
+      if (elapsed > 40 && !m.ev.c) { m.ev.c = 1; sayAll('Investidores a caminho!', 3); for (let i = 0; i < 2; i++) spawnEnemy('charger'); }
+      if (elapsed > 80 && !m.ev.b) { m.ev.b = 1; sayAll('Um brutamontes se aproxima do gerador!', 3); spawnEnemy('brute'); }
       m.text = `Defenda o gerador: ${Math.ceil(left)}s — integridade ${Math.max(0, Math.round(generator.hp / generator.max * 100))}%`;
       m.progress = elapsed / m.duration;
       if (left <= 0) endMission(true);
@@ -1119,7 +1275,7 @@ function buildMission(id) {
           m.phase = 2;
           const a = Math.random() * Math.PI * 2;
           pad = makeBeacon(Math.cos(a) * 50, Math.sin(a) * 50);
-          say('Brutamontes abatidos! Vá até a zona de extração!', 4);
+          sayAll('Brutamontes abatidos! Vá até a zona de extração!', 4);
         }
       }
     };
@@ -1128,7 +1284,7 @@ function buildMission(id) {
         m.text = `Derrube os brutamontes: ${2 - m.brutes} / 2`;
         m.progress = (2 - m.brutes) / 2;
       } else {
-        const inside = Math.hypot(player.pos.x - pad.x, player.pos.z - pad.z) < 6;
+        const inside = anyLiveNear(pad, 6);
         m.holdT = Math.max(0, Math.min(1, m.holdT + (inside ? dt / 6 : -dt / 12)));
         m.text = 'Chegue à zona de extração e aguarde o transporte';
         m.progress = m.holdT;
@@ -1178,12 +1334,14 @@ function clearWorld() {
   if (pad) { scene.remove(pad.g); pad = null; }
   if (zoneRing) { scene.remove(zoneRing); zoneRing = null; }
   if (plane) { scene.remove(plane.g); plane = null; }
-  waypoint = null; lootRun = null;
-  $('loot').classList.remove('on'); $('mods').innerHTML = '';
+  waypoint = null; waypointHide = 0; lootRun = null; enemyById.clear(); projById.clear();
+  Object.values(others).forEach(o => { o.group.visible = false; });
+  $('loot').classList.remove('on'); $('mods').innerHTML = ''; $('party').innerHTML = '';
   playerGroup.visible = true; $('fade').style.opacity = 0;
 }
 
 function startMission(id) {
+  if (net.role === 'client') return;
   ensureAudio();
   const tier = Math.max(1, MISSIONS.findIndex(m => m.id === id) + 1);
   relax = tier === 1;                                    // modo relax só no nível 1
@@ -1196,102 +1354,138 @@ function startMission(id) {
     const L = opLayout;
     buildTerrain(L.R, 130, [{ x: L.S.x, z: L.S.z, r: 10 }, { x: L.G.x, z: L.G.z, r: 12 }, { x: L.E.x, z: L.E.z, r: 22 }]);
   } else buildTerrain(95, 45, [{ x: 0, z: 0, r: 10 }]);
-  kills = 0;
+  const rockData = rocks.map(k => [r1(k.x), r1(k.z), r1(k.r), r1(k.y)]);
+  kills = 0; killsBy = {}; respawnTimers = {};
   elapsed = 0;
   spawnTimer = 1;
   shake = 0;
   mods = { hp: 1 + 0.15 * (tier - 1), count: 1 + 0.08 * (tier - 1), speed: 1 + 0.02 * (tier - 1), edmg: 1 + 0.1 * (tier - 1), elite: 0.02 * (tier - 1) };
   xp = 0; level = 1; xpNeed = 60; pendingLoot = 0; buffs = { dmg: 0, shield: 0 };
   stats = { shots: 0, hits: 0, supplies: 0, orbitals: 0, deaths: 0 };
-  $('kills').textContent = 'Abates: 0';
-  player.ammo = WEAPONS.map(w => ({ mag: w.mag, reserve: Math.min(reserveCap(w), Math.round(w.reserve0 + w.reserveMax * 0.05 * lvl('ammo'))) }));
-  Object.assign(player, {
-    hp: maxHp(), weapon: 0, mag: player.ammo[0].mag, reserve: player.ammo[0].reserve, reloading: 0, fireCd: 0,
-    rolling: 0, rollCd: 0, lastHit: 0, supplyCd: 0, strikeCd: 0, clickT: 0, invuln: 0, yaw: 0, pitch: 0.15,
+  resetLocalPlayer();
+  const base = opLayout ? opLayout.S.clone() : new THREE.Vector3(0, 0, 0);
+  const roster = net.role === 'host' && net.roster.length ? net.roster : [{ id: net.id, name: myName() }];
+  const spawn = {};
+  roster.forEach((p, i) => {
+    const pos = spawnRing(base, i), yaw = opLayout ? Math.atan2(-(opLayout.G.x - base.x), -(opLayout.G.z - base.z)) : 0;
+    spawn[p.id] = [r1(pos.x), r1(pos.z), r2(yaw)];
+    if (p.id === net.id) { player.pos.copy(pos); player.yaw = yaw; }
+    else { const o = ensureOther(p.id); o.status = 'alive'; o.pos.copy(pos); o.tp.copy(pos); o.seen = 0; o.last = null; o.bd = false; o.st = {}; o.group.visible = true; }
   });
-  if (opLayout) {
-    player.pos.copy(opLayout.S);
-    const d = opLayout.G.clone().sub(opLayout.S);
-    player.yaw = Math.atan2(-d.x, -d.z);                 // olhando para o gerador
-    checkpoint.copy(opLayout.S);
-  } else { player.pos.set(0, 0, 0); checkpoint.set(0, 0, 0); }
+  checkpoint.copy(base);
   mission = buildMission(id);
   mission.par = def ? def.par : 4;
   mission.tier = tier;
   mission.livesLeft = mission.lives || 0;
-  player.hitT = 0; player.moving = false; resetAnimation();
+  afterMissionBuilt(id);
+  if (net.role === 'host') {
+    net.lock(true);
+    net.all({ k: 'start', id, title: mission.title, relax, tier, biome: def ? def.biome : 'desert', R: ARENA_R, rocks: rockData,
+              spawn, lives: mission.lives || 0, par: mission.par, mods: [mods.hp, mods.count, mods.speed, mods.edmg, mods.elite] });
+  }
+  state = 'playing'; uiOpen = false;
+  say(id === 'operation' ? 'Siga até o gerador. Cuidado com os pelotões.' : 'Boa sorte, soldado.', 3);
+  renderer.domElement.requestPointerLock();
+}
+function resetLocalPlayer() {
+  $('kills').textContent = 'Abates: 0';
+  player.ammo = WEAPONS.map(w => ({ mag: w.mag, reserve: Math.min(reserveCap(w), Math.round(w.reserve0 + w.reserveMax * 0.05 * lvl('ammo'))) }));
+  Object.assign(player, {
+    hp: maxHp(), weapon: 0, mag: player.ammo[0].mag, reserve: player.ammo[0].reserve, reloading: 0, fireCd: 0,
+    rolling: 0, rollCd: 0, lastHit: 0, supplyCd: 0, strikeCd: 0, clickT: 0, invuln: 0, yaw: 0, pitch: 0.15, boarded: false,
+  });
+  player.hitT = 0; player.moving = false; resetAnimation(); playerGroup.visible = true;
+}
+function afterMissionBuilt(id) {
+  setNameTag(playerGroup, myName());
   $('oTitle').textContent = mission.title;
   $('boss').style.display = id === 'queen' ? 'block' : 'none';
   $('bossName').textContent = 'RAINHA DA COLMEIA';
   $('hud').classList.add('on');
   $('menu').classList.add('hidden'); $('results').classList.remove('on');
   $('resume').style.display = 'none'; $('abort').style.display = 'none';
-  state = 'playing';
-  say(id === 'operation' ? 'Siga até o gerador. Cuidado com os pelotões.' : 'Boa sorte, soldado.', 3);
-  renderer.domElement.requestPointerLock();
 }
 
 function endMission(win) {
-  if (!['playing', 'dying', 'cinematic', 'loot'].includes(state)) return;
-  state = 'ended';
-  document.exitPointerLock();
-  $('hud').classList.remove('on'); $('loot').classList.remove('on');
-  playerGroup.visible = true; $('fade').style.opacity = 0;
-  showResults(win);
+  if (net.role === 'client') return;                       // só o host (ou o solo) decide o fim
+  if (!['playing', 'dying', 'downed', 'cinematic', 'loot'].includes(state)) return;
+  const R = buildResults(win);
+  if (net.role === 'host') {
+    for (const p of net.roster) if (p.id !== net.id) net.to(p.id, { k: 'end', ...R, credits: creditFor(p.id, win, R.total), kills: killsBy[p.id] || 0 });
+    net.lock(false);
+  }
+  finishMission(win);
+  presentResults({ ...R, credits: creditFor(net.id, win, R.total), kills: net.role === 'solo' ? kills : (killsBy[net.id] || 0) });
   beep(win ? 660 : 180, 0.6, 0.12);
+}
+function finishMission() {
+  state = 'ended'; uiOpen = false;
+  document.exitPointerLock();
+  $('hud').classList.remove('on'); $('loot').classList.remove('on'); $('clickGo').classList.remove('on');
+  playerGroup.visible = true; $('fade').style.opacity = 0;
+  Object.values(others).forEach(o => { o.group.visible = false; });
 }
 function abortMission() {
   if (state === 'ended' || state === 'menu') return;
-  state = 'ended';
-  document.exitPointerLock();
+  if (net.role === 'host') { net.all({ k: 'abort' }); net.lock(false); }
+  if (net.role === 'client') { net.leave(); }
+  finishMission();
   clearWorld();
-  $('hud').classList.remove('on');
   $('menu').classList.remove('hidden');
   $('resume').style.display = 'none'; $('abort').style.display = 'none';
   $('sub').textContent = 'Operação abandonada. Nenhuma recompensa.';
+  renderAll();
 }
 
 // ───────────────────────── Pontuação e créditos finais ─────────────────────────
 const fmtTime = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
-function computeScore(win) {
+function teamStats() {
+  const S = { ...stats };
+  for (const o of Object.values(others)) { const t = o.stats || [0, 0, 0, 0, 0]; S.shots += t[0]; S.hits += t[1]; S.supplies += t[2]; S.orbitals += t[3]; S.deaths += t[4]; }
+  return S;
+}
+function computeScore(win, S = teamStats()) {
   const mins = elapsed / 60, par = mission.par || 4;
   const rows = [];
   const add = (label, v) => rows.push([label, Math.round(v)]);
   if (win) add('Missão cumprida', 100);
   if (win) add(`Tempo ${fmtTime(elapsed)} (meta ${Math.round(par * 0.75)} min)`, Math.max(0, 120 * (1 - Math.max(0, mins - par * 0.75) / (par * 0.75))));
   add(`Abates (${kills})`, Math.min(80, Math.floor(kills * 0.25)));
-  const acc = stats.shots ? stats.hits / stats.shots : 0;
-  add(`Precisão (${Math.round(acc * 100)}% de ${stats.shots} disparos)`, 60 * acc);
+  const acc = S.shots ? S.hits / S.shots : 0;
+  add(`Precisão (${Math.round(acc * 100)}% de ${S.shots} disparos)`, 60 * acc);
   add(`Nível alcançado (${level})`, (level - 1) * 3);
-  if (stats.deaths) add(`Mortes (${stats.deaths})`, -25 * stats.deaths);
-  if (stats.supplies) add(`Suprimentos usados (${stats.supplies})`, -6 * stats.supplies);
-  if (stats.orbitals) add(`Orbitais usados (${stats.orbitals})`, -10 * stats.orbitals);
+  if (S.deaths) add(`Mortes (${S.deaths})`, -25 * S.deaths);
+  if (S.supplies) add(`Suprimentos usados (${S.supplies})`, -6 * S.supplies);
+  if (S.orbitals) add(`Orbitais usados (${S.orbitals})`, -10 * S.orbitals);
   const total = Math.max(0, rows.reduce((a, r) => a + r[1], 0));
   return { rows, total };
 }
 const rankOf = t => t >= 330 ? 'S' : t >= 270 ? 'A' : t >= 210 ? 'B' : t >= 140 ? 'C' : 'D';
-function showResults(win) {
+function buildResults(win) {
   const { rows, total } = computeScore(win);
-  const credits = Math.round(total * 1.2 + kills * 0.5 + (win ? 40 : 0));
-  save.credits += credits;
-  const prev = save.best[mission.id];
-  const record = win && (prev == null || total > prev);
-  if (record) save.best[mission.id] = total;
+  return { win, mid: mission.id, title: mission.title, rows, total };
+}
+const creditFor = (id, win, total) => Math.round(total * 1.2 + (net.role === 'solo' ? kills : (killsBy[id] || 0)) * 0.5 + (win ? 40 : 0));
+function presentResults(r) {
+  save.credits += r.credits;
+  const prev = save.best[r.mid];
+  const record = r.win && (prev == null || r.total > prev);
+  if (record) save.best[r.mid] = r.total;
   persist(); renderAll();
-  $('resKicker').textContent = (win ? 'OPERAÇÃO CONCLUÍDA' : 'OPERAÇÃO FALHOU') + ' · ' + mission.title.toUpperCase();
-  $('resTitle').textContent = win ? (mission.id === 'operation' ? 'Extração confirmada' : 'Missão cumprida') : 'Esquadrão perdido';
-  $('resRows').innerHTML = rows.map((r, i) =>
-    `<div class="res-row" style="animation-delay:${0.25 + i * 0.28}s"><span>${r[0]}</span><b class="${r[1] < 0 ? 'neg' : 'pos'}">${r[1] >= 0 ? '+' : ''}${r[1]}</b></div>`).join('');
-  const t0 = 0.25 + rows.length * 0.28;
+  $('resKicker').textContent = (r.win ? 'OPERAÇÃO CONCLUÍDA' : 'OPERAÇÃO FALHOU') + ' · ' + r.title.toUpperCase();
+  $('resTitle').textContent = r.win ? (r.mid === 'operation' ? 'Extração confirmada' : 'Missão cumprida') : 'Esquadrão perdido';
+  $('resRows').innerHTML = r.rows.map((x, i) =>
+    `<div class="res-row" style="animation-delay:${0.25 + i * 0.28}s"><span>${x[0]}</span><b class="${x[1] < 0 ? 'neg' : 'pos'}">${x[1] >= 0 ? '+' : ''}${x[1]}</b></div>`).join('');
+  const t0 = 0.25 + r.rows.length * 0.28;
   document.querySelectorAll('.res-total').forEach(el => { el.style.animation = 'none'; void el.offsetWidth; el.style.animation = `rowin .6s ${t0}s forwards`; });
-  $('resScore').textContent = total;
-  $('resRank').textContent = win ? rankOf(total) : '—';
-  $('resCredits').textContent = `+${credits} créditos${record ? ' · NOVO RECORDE!' : ''}`;
+  $('resScore').textContent = r.total;
+  $('resRank').textContent = r.win ? rankOf(r.total) : '—';
+  $('resCredits').textContent = `+${r.credits} créditos para você${r.kills ? ` (${r.kills} abates seus)` : ''}${record ? ' · NOVO RECORDE!' : ''}`;
   $('results').classList.add('on');
 }
 
 let selMission = 'operation', activeTab = 'ops';
-const TABS = [['ops', 'OPERAÇÕES'], ['arsenal', 'ARSENAL'], ['upg', 'MELHORIAS'], ['keys', 'CONTROLES']];
+const TABS = [['ops', 'OPERAÇÕES'], ['online', 'ONLINE'], ['arsenal', 'ARSENAL'], ['upg', 'MELHORIAS'], ['keys', 'CONTROLES']];
 const BIOME_NAME = { desert: 'Deserto', ice: 'Gelo', toxic: 'Pântano tóxico', volcanic: 'Vulcânico' };
 const ENEMY_INFO = [
   ['Rastejador', 'Veloz e frágil. Ataca em bando, corpo a corpo.'], ['Cuspidor', 'Mantém distância e lança bolas de ácido.'],
@@ -1304,7 +1498,7 @@ function renderOps() {
   const best = save.best[m.id];
   const danger = '■'.repeat(m.danger) + '□'.repeat(5 - m.danger);
   $('pane-ops').innerHTML = `
-    <h2 class="sec">Selecionar operação</h2>
+    <h2 class="sec">Selecionar operação${net.role !== 'solo' ? ` · SALA ${net.code} · ${net.roster.length} jogador(es)` : ''}</h2>
     <div class="ops">
       <div class="op-list">${MISSIONS.map((x, i) => `
         <button class="op-item ${x.id === selMission ? 'on' : ''}" data-id="${x.id}">
@@ -1322,7 +1516,7 @@ function renderOps() {
             <div><small>RANK</small><b>${best != null ? rankOf(best) : '—'}</b></div>
             <div><small>TEMPO-META</small><b>${Math.round(m.par * 0.75)} min</b></div>
           </div>
-          <div class="op-foot"><button class="btn primary" id="deploy">Iniciar operação</button>
+          <div class="op-foot"><button class="btn primary" id="deploy" ${net.role === 'client' || missionBusy() ? 'disabled' : ''}>${net.role === 'client' ? 'Aguardando o host' : 'Iniciar operação'}</button>
             <span style="color:var(--dim);font-size:12px">Pontos pela velocidade, abates, precisão, mortes, suprimentos e orbitais.</span></div>
         </div>
       </div>
@@ -1380,7 +1574,7 @@ function renderKeys() {
 }
 function renderAll() {
   $('credits').textContent = save.credits;
-  renderOps(); renderArsenal(); renderUpgrades(); renderKeys();
+  renderOps(); renderOnline(); renderArsenal(); renderUpgrades(); renderKeys();
 }
 function showTab(id) {
   activeTab = id;
@@ -1393,14 +1587,16 @@ function buildMenu() {
   document.querySelectorAll('.tab').forEach(b => b.onclick = () => showTab(b.dataset.tab));
   $('resume').onclick = () => { renderer.domElement.requestPointerLock(); };
   $('abort').onclick = abortMission;
-  $('resBtn').onclick = () => { $('results').classList.remove('on'); $('menu').classList.remove('hidden'); $('sub').textContent = 'Pronto para o deploy.'; $('resume').style.display = 'none'; $('abort').style.display = 'none'; };
+  $('resBtn').onclick = () => { $('results').classList.remove('on'); $('menu').classList.remove('hidden'); $('sub').textContent = net.role === 'solo' ? 'Pronto para o deploy.' : `Sala ${net.code} · aguardando a próxima operação`; $('resume').style.display = 'none'; $('abort').style.display = 'none'; clearWorld(); renderAll(); };
+  $('clickGo').onclick = () => { renderer.domElement.requestPointerLock(); };
+  setNameTag(playerGroup, myName());
   renderAll(); showTab('ops');
 }
 
 // ───────────────────────── Entrada ─────────────────────────
 addEventListener('keydown', e => {
   keys[e.code] = true;
-  if (state !== 'playing') return;
+  if (state !== 'playing' || uiOpen) return;
   if (e.code === 'KeyR') startReload();
   if (e.code === 'Space') tryRoll();
   if (e.code === 'KeyE') callSupply();
@@ -1412,7 +1608,7 @@ addEventListener('keydown', e => {
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
 addEventListener('mousedown', e => { if (e.button === 0) { mouseDown = true; player.clickT = 0.2; } });
-addEventListener('wheel', e => { if (state === 'playing') switchWeapon((player.weapon + (e.deltaY > 0 ? 1 : WEAPONS.length - 1)) % WEAPONS.length); });
+addEventListener('wheel', e => { if (state === 'playing' && !uiOpen) switchWeapon((player.weapon + (e.deltaY > 0 ? 1 : WEAPONS.length - 1)) % WEAPONS.length); });
 addEventListener('mouseup', e => { if (e.button === 0) mouseDown = false; });
 addEventListener('mousemove', e => {
   if (document.pointerLockElement !== renderer.domElement || state !== 'playing') return;
@@ -1421,6 +1617,16 @@ addEventListener('mousemove', e => {
 });
 document.addEventListener('pointerlockchange', () => {
   const locked = document.pointerLockElement === renderer.domElement;
+  if (net.role !== 'solo' && mission && ['playing', 'loot', 'dying', 'downed'].includes(state)) {
+    // online o jogo não pausa: o menu só abre por cima e você fica parado
+    uiOpen = !locked;
+    if (!locked) {
+      $('sub').textContent = `Sala ${net.code} · a operação continua para os outros jogadores`;
+      $('resume').style.display = 'inline-block'; $('abort').style.display = 'inline-block';
+      $('menu').classList.remove('hidden');
+    } else { $('menu').classList.add('hidden'); $('clickGo').classList.remove('on'); }
+    return;
+  }
   if (!locked && state === 'playing') {
     state = 'paused';
     $('sub').textContent = 'Pausado';
@@ -1490,17 +1696,8 @@ function aimGround(maxD = 40) {
 function callSupply() {
   if (player.supplyCd > 0) { say(`Suprimentos em ${Math.ceil(player.supplyCd)}s`, 1.2); return; }
   const target = aimGround(40);
-  const g = new THREE.Group();
-  const box = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.2, 1.2), new THREE.MeshStandardMaterial({ color: 0x3a7a3a }));
-  box.position.y = 0.6;
-  box.castShadow = true;
-  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 40, 6, 1, true), new THREE.MeshBasicMaterial({ color: 0x5ce08a, transparent: true, opacity: 0.5 }));
-  beam.position.y = 20;
-  g.add(box, beam);
-  g.position.copy(target);
-  box.position.y = 30;
-  scene.add(g);
-  crates.push({ g, box, landed: false, t: 0 });
+  if (net.role === 'client') net.toHost({ k: 'crateReq', x: target.x, z: target.z });
+  else hostAddCrate(target.x, target.z);
   player.supplyCd = SUPPLY_COOLDOWN;
   stats.supplies++;
   say('Suprimentos a caminho!', 1.5);
@@ -1508,16 +1705,21 @@ function callSupply() {
 }
 
 // Ataque orbital: marca o ponto mirado e, após alguns segundos, um raio devasta a área (também fere você)
-function callStrike() {
-  if (player.strikeCd > 0) { say(`Orbital em ${Math.ceil(player.strikeCd)}s`, 1.2); return; }
-  const pos = aimGround(60);
+function addStrike(id, x, z) {
+  const pos = new THREE.Vector3(x, 0, z);
   const line = op => new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 80, 5, 1, true),
     new THREE.MeshBasicMaterial({ color: 0xff2a1a, transparent: true, opacity: op }));
   const center = line(0.95); center.position.copy(pos).setY(40);
   const dot = new THREE.Mesh(new THREE.CircleGeometry(0.7, 20), new THREE.MeshBasicMaterial({ color: 0xff2a1a }));
   dot.rotation.x = -Math.PI / 2; dot.position.copy(pos).setY(0.08);
   scene.add(center, dot);
-  strikes.push({ pos, center, dot, outer: [], t: 0, base: rand(0, Math.PI * 2), line });
+  strikes.push({ id, pos, center, dot, outer: [], t: 0, base: rand(0, Math.PI * 2), line });
+}
+function callStrike() {
+  if (player.strikeCd > 0) { say(`Orbital em ${Math.ceil(player.strikeCd)}s`, 1.2); return; }
+  const pos = aimGround(60);
+  if (net.role === 'client') net.toHost({ k: 'strikeReq', x: pos.x, z: pos.z });
+  else { const id = uid(); addStrike(id, pos.x, pos.z); net.all({ k: 'strike', id, x: pos.x, z: pos.z }); }
   player.strikeCd = Math.max(20, STRIKE_COOLDOWN - 2 * lvl('strike'));
   stats.orbitals++;
   say('Ataque orbital marcado — afaste-se!', 1.8); beep(300, 0.4, 0.1);
@@ -1541,6 +1743,7 @@ function shoot() {
   player.clickT = 0;
   stats.shots++;
   alertNear(player.pos, 65);
+  pendingFlag.shot = true;
   if (mixer) trigger('Shoot');
   noise(w.id === 'shotgun' ? 0.22 : 0.09, w.id === 'dmr' ? 0.2 : 0.14, w.id === 'shotgun' ? 1800 : 2800);
   player.pitch = Math.min(0.8, player.pitch + w.recoil * rand(0.6, 1.2));
@@ -1588,6 +1791,7 @@ function shoot() {
 
 // ───────────────────────── Atualização ─────────────────────────
 function updatePlayer(dt) {
+  const kk = uiOpen ? NOKEYS : keys;
   player.moving = false; player.sprinting = false;
   if (player.hitT > 0) player.hitT -= dt;
   if (player.flash > 0) player.flash -= dt;
@@ -1615,15 +1819,15 @@ function updatePlayer(dt) {
     playerGroup.scale.y = 1;
     const f = fwdOf(player.yaw), r = rightOf(player.yaw);
     const mv = new THREE.Vector3();
-    if (keys.KeyW) mv.add(f);
-    if (keys.KeyS) mv.sub(f);
-    if (keys.KeyD) mv.add(r);
-    if (keys.KeyA) mv.sub(r);
+    if (kk.KeyW) mv.add(f);
+    if (kk.KeyS) mv.sub(f);
+    if (kk.KeyD) mv.add(r);
+    if (kk.KeyA) mv.sub(r);
     if (mv.lengthSq() > 0) {
       mv.normalize();
       const mf = mv.dot(f), mr = mv.dot(r);
-      const sprint = keys.ShiftLeft && mf > -0.35;           // correr rápido em qualquer direção, menos de costas
-      const walk = keys.KeyC && !sprint;                     // C: andar devagar
+      const sprint = kk.ShiftLeft && mf > -0.35;           // correr rápido em qualquer direção, menos de costas
+      const walk = kk.KeyC && !sprint;                     // C: andar devagar
       const kind = walk ? 'Walk' : 'Run';
       const speed = (walk ? PLAYER.walk : sprint ? PLAYER.sprint : PLAYER.speed) * (0.88 + 0.12 * mf) * (1 + 0.01 * lvl('speed'));   // lado e costas são mais lentos
       player.moving = true;
@@ -1665,19 +1869,21 @@ function updateCamera() {
 }
 
 function enemyTarget(e) {
+  const near = nearestLive(e.mesh.position);
+  const pos = near ? near.pos : player.pos;
   if (generator && generator.active && generator.hp > 0 && e.type !== 'spitter' && e.type !== 'queen') {
     const dg = Math.hypot(e.mesh.position.x - generator.x, e.mesh.position.z - generator.z);
-    const dp = Math.hypot(e.mesh.position.x - player.pos.x, e.mesh.position.z - player.pos.z);
-    if (dg < dp + 12) return { pos: new THREE.Vector3(generator.x, 0, generator.z), gen: true, rad: 2.6 };
+    const dp = Math.hypot(e.mesh.position.x - pos.x, e.mesh.position.z - pos.z);
+    if (dg < dp + 12 || !near) return { pos: new THREE.Vector3(generator.x, 0, generator.z), gen: true, rad: 2.6, pid: -1 };
   }
-  return { pos: player.pos, gen: false, rad: 0 };
+  return { pos, gen: false, rad: 0, pid: near ? near.id : -1 };
 }
 
 function spitAt(from, dir, speed, dmg, big) {
   const pm = new THREE.Mesh(new THREE.SphereGeometry(big ? 0.45 : 0.28, 8, 6), new THREE.MeshBasicMaterial({ color: big ? 0xff40c0 : 0xa4ff6a }));
   pm.position.copy(from);
   scene.add(pm);
-  projectiles.push({ m: pm, v: dir.clone().normalize().multiplyScalar(speed), life: 4, dmg: dmg * mods.edmg, big });
+  projectiles.push({ id: uid(), m: pm, v: dir.clone().normalize().multiplyScalar(speed), life: 4, dmg: dmg * mods.edmg, big });
 }
 function patrolMove(e, dt) {
   const m = e.mesh, pl = e.pl;
@@ -1700,7 +1906,7 @@ function updateEnemies(dt) {
     const to = tg.pos.clone().sub(m.position).setY(0);
     const dist = Math.max(0, to.length() - tg.rad);
     const dir = to.normalize();
-    const hurt = d => tg.gen ? damageGenerator(d * mods.edmg) : damagePlayer(d * mods.edmg);
+    const hurt = d => tg.gen ? damageGenerator(d * mods.edmg) : (tg.pid >= 0 ? hurtPlayer(tg.pid, d * mods.edmg) : 0);
     const walkTo = sp => { m.position.addScaledVector(dir, sp * dt * e.spd); };
     e.phase += dt * (e.type === 'crawler' || e.type === 'bomber' ? 14 : 7);
     m.position.y = Math.abs(Math.sin(e.phase)) * 0.12;
@@ -1714,7 +1920,7 @@ function updateEnemies(dt) {
       if (e.shootCd <= 0 && dist < 38) {
         e.shootCd = rand(1.8, 3);
         const from = m.position.clone().setY(1.5);
-        spitAt(from, player.pos.clone().add(new THREE.Vector3(0, 1.1, 0)).sub(from), 18, e.t.dmg, false);
+        spitAt(from, tg.pos.clone().add(new THREE.Vector3(0, 1.1, 0)).sub(from), 18, e.t.dmg, false);
         beep(240, 0.12, 0.05);
       }
     } else if (e.type === 'bomber') {
@@ -1747,7 +1953,7 @@ function updateEnemies(dt) {
       if (e.volleyCd <= 0 && dist > 9) {
         e.volleyCd = enraged ? 3 : 4.5;
         const from = m.position.clone().setY(2.6);
-        const base = player.pos.clone().add(new THREE.Vector3(0, 1.1, 0)).sub(from);
+        const base = tg.pos.clone().add(new THREE.Vector3(0, 1.1, 0)).sub(from);
         for (let i = -2; i <= 2; i++) {
           const v = base.clone(); const c = Math.cos(i * 0.16), sn = Math.sin(i * 0.16);
           const x = v.x * c - v.z * sn, z = v.x * sn + v.z * c; v.x = x; v.z = z;
@@ -1757,7 +1963,7 @@ function updateEnemies(dt) {
       }
       if (e.summonCd <= 0 && enemies.length < 18) {
         e.summonCd = enraged ? 10 : 14;
-        say('A Rainha chama o enxame!', 2);
+        sayAll('A Rainha chama o enxame!', 2);
         for (let k = 0; k < 4; k++) {
           const a = rand(0, Math.PI * 2);
           spawnEnemy(k === 3 ? 'bomber' : 'crawler', m.position.clone().add(new THREE.Vector3(Math.cos(a) * 6, 0, Math.sin(a) * 6)));
@@ -1777,11 +1983,13 @@ function updateEnemies(dt) {
 }
 
 function updateProjectiles(dt) {
+  const live = livePlayers();
   for (const p of [...projectiles]) {
     p.m.position.addScaledVector(p.v, dt);
     p.life -= dt;
-    const hitPlayer = p.m.position.distanceTo(player.pos.clone().setY(1.1)) < (p.big ? 1.2 : 0.9);
-    if (hitPlayer) { damagePlayer(p.dmg); p.life = 0; }
+    for (const q of live) {
+      if (p.m.position.distanceTo(q.pos.clone().setY(1.1)) < (p.big ? 1.2 : 0.9)) { hurtPlayer(q.id, p.dmg); p.life = 0; break; }
+    }
     if (p.life <= 0 || p.m.position.y < 0) {
       scene.remove(p.m);
       projectiles.splice(projectiles.indexOf(p), 1);
@@ -1804,16 +2012,13 @@ function updateEffects(dt) {
     if (!c.landed) {
       c.box.position.y -= 18 * dt;
       if (c.box.position.y <= 0.6) { c.box.position.y = 0.6; c.landed = true; noise(0.3, 0.2, 400); }
-    } else if (player.pos.distanceTo(c.g.position) < 2.4) {
-      WEAPONS.forEach((w, i) => {
-        if (i === player.weapon) { player.mag = w.mag; player.reserve = reserveCap(w); }
-        else player.ammo[i] = { mag: w.mag, reserve: reserveCap(w) };
-      });
+    } else if (state === 'playing' && player.pos.distanceTo(c.g.position) < 2.4) {
+      refillAmmo();
       player.hp = Math.min(maxHp(), player.hp + 50);
       say('Suprimentos coletados', 1.5);
       beep(760, 0.2);
-      scene.remove(c.g);
-      crates.splice(crates.indexOf(c), 1);
+      removeCrate(c);
+      if (net.role === 'client') net.toHost({ k: 'crateGet', id: c.id }); else net.all({ k: 'crateGone', id: c.id });
     }
   }
   for (const s of [...strikes]) {
@@ -1837,15 +2042,20 @@ function updateEffects(dt) {
       strikes.splice(strikes.indexOf(s), 1);
       addFlash(s.pos, 12, 0xff6040);
       burst(s.pos.clone().setY(1), 0xff8040, 60, 14);
-      noise(0.7, 0.4, 500); shake = Math.max(shake, 0.9);
-      alertNear(s.pos, 90);
-      const R = 11;
-      for (const e of [...enemies]) {
-        const d = e.mesh.position.distanceTo(s.pos);
-        if (d < R) damageEnemy(e, 320 * (1 - 0.5 * d / R));
+      const dl = Math.hypot(player.pos.x - s.pos.x, player.pos.z - s.pos.z);
+      if (dl < 90) { noise(0.7, 0.4, 500); shake = Math.max(shake, 0.9 * Math.max(0.2, 1 - dl / 90)); }
+      if (net.role !== 'client') {
+        alertNear(s.pos, 90);
+        const R = 11;
+        for (const e of [...enemies]) {
+          const d = e.mesh.position.distanceTo(s.pos);
+          if (d < R) damageEnemy(e, 320 * (1 - 0.5 * d / R), -1);
+        }
+        for (const p of livePlayers()) {
+          const dp = Math.hypot(p.pos.x - s.pos.x, p.pos.z - s.pos.z);
+          if (dp < 8) hurtPlayer(p.id, 45 * (1 - dp / 10));
+        }
       }
-      const dp = Math.hypot(player.pos.x - s.pos.x, player.pos.z - s.pos.z);
-      if (dp < 8) damagePlayer(45 * (1 - dp / 10));
     }
   }
   for (const f of [...flashes]) {
@@ -1857,13 +2067,14 @@ function updateEffects(dt) {
   }
   for (const d of [...drops]) {
     d.t -= dt; d.m.rotation.y += dt * 3; d.m.position.y = 0.7 + 0.15 * Math.sin(elapsed * 4);
-    if (player.pos.distanceTo(d.m.position.clone().setY(0)) < 2.2) {
+    if (state === 'playing' && player.pos.distanceTo(d.m.position.clone().setY(0)) < 2.2) {
       if (d.type === 'hp') player.hp = Math.min(maxHp(), player.hp + 25);
       else player.reserve = Math.min(reserveCap(curW()), player.reserve + Math.ceil(curW().mag * 1.5));
       say(d.type === 'hp' ? '+ Vida' : '+ Munição', 1); beep(700, 0.1);
+      if (net.role === 'client') net.toHost({ k: 'dropGet', id: d.id }); else net.all({ k: 'dropGone', id: d.id });
       d.t = 0;
     }
-    if (d.t <= 0) { scene.remove(d.m); drops.splice(drops.indexOf(d), 1); }
+    if (d.t <= 0) removeDrop(d);
   }
   if (msgTimer > 0) { msgTimer -= dt; if (msgTimer <= 0) $('msg').classList.remove('on'); }
 }
@@ -1874,7 +2085,7 @@ function updateHud() {
   $('hpBar').style.background = pct > 50 ? '#4cd68a' : pct > 25 ? '#ffcf3f' : '#ff4d4d';
   $('wname').textContent = `[${player.weapon + 1}] ${curW().name}`;
   $('ammo').innerHTML = (player.reloading > 0 ? 'Recarregando' : player.mag) + ` <small>/ ${player.reserve}</small>`;
-  $('oText').textContent = mission.text;
+  $('oText').textContent = state === 'downed' ? 'Você caiu. Aguarde um aliado ou o fim da operação.' : mission.text;
   $('oBar').style.width = Math.min(100, mission.progress * 100) + '%';
   const sup = player.supplyCd > 0 ? `${Math.ceil(player.supplyCd)}s` : 'pronto';
   const orb = player.strikeCd > 0 ? `${Math.ceil(player.strikeCd)}s` : 'pronto';
@@ -1882,21 +2093,360 @@ function updateHud() {
   if (mission.id === 'queen' && mission.boss) $('bossBar').style.width = Math.max(0, mission.boss.hp / mission.boss.maxHp * 100) + '%';
   $('xpBar').style.width = Math.min(100, xp / xpNeed * 100) + '%';
   $('lvl').textContent = `NV ${level} · XP ${Math.floor(xp)} / ${xpNeed}`;
+  $('kills').textContent = 'Abates: ' + kills;
   $('lives').innerHTML = mission.lives ? 'REFORÇOS ' + [...Array(mission.lives)].map((_, i) => `<span class="${i < mission.livesLeft ? 'on' : ''}">●</span>`).join(' ') : '';
   const wp = $('wp');
-  if (waypoint) {
+  const wd = waypoint ? Math.hypot(waypoint.x - player.pos.x, waypoint.z - player.pos.z) : 0;
+  if (waypoint && !(waypointHide && wd < waypointHide)) {
     const dx = waypoint.x - player.pos.x, dz = waypoint.z - player.pos.z;
     wp.style.display = 'block';
     $('arrow').style.transform = `rotate(${-(Math.atan2(-dx, -dz) - player.yaw)}rad)`;
-    $('wpText').textContent = `${Math.round(Math.hypot(dx, dz))} m`;
+    $('wpText').textContent = `${Math.round(wd)} m`;
   } else wp.style.display = 'none';
 }
 
-function respawnPlayer() {
-  mission.livesLeft--;
-  player.hp = maxHp(); player.pos.copy(checkpoint); player.invuln = 4; player.hitT = 0;
-  state = 'playing'; resetAnimation();
-  say(`Reforço no campo! Restam ${mission.livesLeft}.`, 3); beep(660, 0.3, 0.1);
+
+
+// ───────────────────────── Online ─────────────────────────
+// Topologia em estrela: o host simula tudo (inimigos, pelotões, missão) e manda "fotos" do mundo 15x por segundo;
+// cada jogador controla o próprio personagem e informa posição/tiros. Salvamento (créditos, melhorias, nome) é local.
+const enemyById = new Map(), projById = new Map();
+const r1 = v => Math.round(v * 10) / 10, r2 = v => Math.round(v * 100) / 100;
+const myName = () => (save.name || '').trim() || 'Jogador';
+const rosterName = id => (net.roster.find(p => p.id === id) || {}).name || `Jogador ${id}`;
+const missionBusy = () => ['playing', 'loot', 'dying', 'downed', 'cinematic'].includes(state);
+const EV_NAMES = ['Shoot', 'Reload', 'Hit', 'Dash', 'Death'];
+
+function ensureOther(id) {
+  let o = others[id];
+  if (o) return o;
+  const group = new THREE.Group(); scene.add(group);
+  setNameTag(group, rosterName(id));
+  o = { id, name: rosterName(id), group, rig: createRig(group), pos: new THREE.Vector3(), tp: new THREE.Vector3(), yaw: 0, ty: 0,
+        status: 'alive', hp: 100, mh: 100, st: {}, ev: null, bd: false, stats: [0, 0, 0, 0, 0], seen: 0, hitT: 0, last: null, wasDead: false };
+  others[id] = o;
+  return o;
+}
+function removeOther(id) { const o = others[id]; if (!o) return; scene.remove(o.group); delete others[id]; }
+function clearOthers() { Object.keys(others).forEach(removeOther); }
+
+function myState() {
+  return {
+    x: r2(player.pos.x), z: r2(player.pos.z), y: r2(player.yaw),
+    mv: player.moving ? 1 : 0, mk: player.moveKind === 'Walk' ? 1 : 0, ma: Math.round(player.moveAlpha || 0), ms: r2(player.moveScale || 1),
+    rl: player.reloading > 0 ? 1 : 0, fl: player.flash > 0 ? 1 : 0, ro: player.rolling > 0 ? 1 : 0,
+    rdy: r2(Math.atan2(-player.rollDir.x, -player.rollDir.z)),
+    dd: state === 'dying' || state === 'downed' ? 1 : 0, hp: Math.round(Math.max(0, player.hp)), mh: maxHp(),
+    sp: player.sprinting ? 1 : 0, wk: keys.KeyC && !player.sprinting ? 1 : 0, w: player.weapon, bd: player.boarded ? 1 : 0,
+    ev: [localEv.Shoot, localEv.Reload, localEv.Hit, localEv.Dash, localEv.Death],
+    st: [stats.shots, stats.hits, stats.supplies, stats.orbitals, stats.deaths],
+  };
+}
+function applyState(o, s) {
+  o.tp.set(s.x, 0, s.z); o.ty = s.y;
+  if (!o.seen) { o.pos.copy(o.tp); o.yaw = s.y; o.seen = 1; }
+  o.hp = s.hp; o.mh = s.mh || 100; o.bd = !!s.bd; o.stats = s.st || o.stats; o.st = s;
+  if (o.wasDead && !s.dd) resetRig(o.rig);
+  o.wasDead = !!s.dd;
+  const ev = s.ev || [0, 0, 0, 0, 0];
+  if (o.ev) EV_NAMES.forEach((n, i) => { if (ev[i] > o.ev[i]) remoteEvent(o, n); });
+  o.ev = ev;
+}
+function remoteEvent(o, n) {
+  const a = o.rig.actions[n];
+  if (a) triggerRig(o.rig, n, n === 'Dash' ? a.getClip().duration / 0.45 : n === 'Reload' || n === 'Death' ? a.getClip().duration / 1.7 : 1);
+  if (n === 'Hit') o.hitT = 0.3;
+  if (n === 'Shoot') {                                      // rastro do tiro do outro jogador
+    const f = fwdOf(o.yaw), from = o.pos.clone().add(new THREE.Vector3(0, 1.28, 0)).addScaledVector(f, 0.72);
+    addTracer(from, from.clone().addScaledVector(f, 38));
+  }
+}
+function updateOthers(dt) {
+  for (const o of Object.values(others)) {
+    if (!o.group.visible && state !== 'cinematic') continue;
+    o.pos.lerp(o.tp, 1 - Math.exp(-dt * 14));
+    let dy = o.ty - o.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); o.yaw += dy * (1 - Math.exp(-dt * 14));
+    o.group.position.copy(o.pos);
+    o.group.rotation.y = o.st.ro ? o.st.rdy : o.yaw;
+    if (o.hitT > 0) o.hitT -= dt;
+    animateRig(o.rig, { dead: !!o.st.dd, rolling: !!o.st.ro, moving: !!o.st.mv, moveKind: o.st.mk ? 'Walk' : 'Run', moveAlpha: o.st.ma || 0,
+      moveScale: o.st.ms || 1, reloading: !!o.st.rl, flashing: !!o.st.fl, hit: o.hitT > 0 }, dt);
+    if (plane && (plane.state === 'closing' || plane.state === 'takeoff') && o.bd) o.group.visible = false;
+  }
+}
+
+// ── cliente → host ──
+function sendClientState(dt) {
+  stateT -= dt; if (stateT > 0) return;
+  stateT = 0.05;
+  const m = myState(); m.k = 'p';
+  m.al = state === 'playing' || state === 'loot' || state === 'cinematic' ? 1 : 0;
+  if (pendingHits.length) { m.h = pendingHits; pendingHits = []; }
+  if (pendingFlag.shot) { m.sh = 1; pendingFlag.shot = false; }
+  net.toHost(m);
+}
+
+// ── host → clientes ──
+function buildSnapshot() {
+  const pl = [Object.assign({ id: net.id, al: localAlive() || state === 'cinematic' ? 1 : 0 }, myState())];
+  for (const o of Object.values(others)) if (o.last) pl.push(Object.assign({ id: o.id, al: o.status === 'alive' ? 1 : 0 }, o.last));
+  const en = enemies.map(e => [e.id, TYPE_LIST.indexOf(e.type), r1(e.mesh.position.x), r1(e.mesh.position.z), r2(e.mesh.rotation.y),
+    Math.max(0, Math.round(e.hp / e.maxHp * 100)), (e.elite ? 1 : 0) | ((ST_CODE[e.st] || 0) << 1)]);
+  const pr = projectiles.map(p => [p.id, r1(p.m.position.x), r1(p.m.position.y), r1(p.m.position.z), p.big ? 1 : 0]);
+  const hud = {
+    ti: mission.title, tx: mission.text, pg: r2(mission.progress), xp: Math.round(xp), xn: xpNeed, lv: level, ll: mission.livesLeft || 0,
+    kl: kills, el: Math.round(elapsed), wp: waypoint ? [r1(waypoint.x), r1(waypoint.z), waypointHide] : null,
+    bs: mission.boss ? [Math.max(0, Math.round(mission.boss.hp)), Math.round(mission.boss.maxHp)] : null,
+    md: [mods.hp, mods.count, mods.speed, mods.edmg, mods.elite],
+  };
+  const ob = {
+    gen: generator ? [r1(generator.x), r1(generator.z), Math.round(generator.hp), generator.max, generator.active ? 1 : 0] : null,
+    pods: pods.length ? pods.map(p => [r1(p.x), r1(p.z), p.got ? 1 : 0]) : null,
+    bea: beacons.length ? beacons.map(b => [r1(b.x), r1(b.z), r2(b.progress), b.done ? 1 : 0]) : null,
+    pad: pad ? [r1(pad.x), r1(pad.z)] : null,
+    zone: zoneRing ? [r1(zoneRing.position.x), r1(zoneRing.position.z)] : null,
+    pln: plane ? [r1(plane.g.position.x), r1(plane.g.position.y), r1(plane.g.position.z), r2(plane.yaw), r2(plane.g.rotation.x), r2(plane.ramp.rotation.x), PLANE_ST.indexOf(plane.state)] : null,
+  };
+  return { k: 's', pl, en, pr, hud, ob };
+}
+function netHost(dt) {
+  if (net.role !== 'host') return;
+  snapT -= dt; if (snapT > 0) return;
+  snapT = 1 / 15;
+  net.all(buildSnapshot());
+}
+
+function createEnemyProxy(a) {
+  const type = TYPE_LIST[a[1]], t = ENEMY_TYPES[type], mesh = makeEnemyMesh(type);
+  const elite = !!(a[6] & 1);
+  if (elite) { mesh.scale.multiplyScalar(1.25); mesh.traverse(o => { if (o.isMesh && o.material.emissive) o.material.emissive.set(0x7a3a00); }); }
+  mesh.position.set(a[2], 0, a[3]); mesh.rotation.y = a[4];
+  scene.add(mesh);
+  const e = { id: a[0], type, t, mesh, hp: t.hp, maxHp: t.hp, tx: a[2], tz: a[3], tr: a[4], st: 'walk', elite, phase: Math.random() * 6, last: new THREE.Vector3(a[2], 0, a[3]) };
+  enemies.push(e); enemyById.set(e.id, e);
+  return e;
+}
+function removeEnemyProxy(e, fx) {
+  if (fx) burst(e.mesh.position.clone().setY(e.t.height), e.type === 'spitter' ? 0xa4ff6a : 0xc23b2a, e.type === 'brute' || e.type === 'queen' ? 40 : 14, 6);
+  scene.remove(e.mesh); enemyById.delete(e.id);
+  const i = enemies.indexOf(e); if (i >= 0) enemies.splice(i, 1);
+}
+function applySnapshot(d) {
+  if (!mission) return;
+  for (const p of d.pl) {
+    if (p.id === net.id) continue;
+    const o = ensureOther(p.id);
+    o.status = p.al ? 'alive' : 'downed'; applyState(o, p);
+  }
+  const seen = new Set();
+  for (const a of d.en) {
+    seen.add(a[0]);
+    const e = enemyById.get(a[0]) || createEnemyProxy(a);
+    e.tx = a[2]; e.tz = a[3]; e.tr = a[4]; e.hp = a[5] / 100 * e.maxHp; e.st = ST_NAME[a[6] >> 1];
+  }
+  for (const e of [...enemies]) if (!seen.has(e.id)) removeEnemyProxy(e, true);
+  const seenP = new Set();
+  for (const a of d.pr) {
+    seenP.add(a[0]);
+    let p = projById.get(a[0]);
+    if (!p) {
+      const m = new THREE.Mesh(new THREE.SphereGeometry(a[4] ? 0.45 : 0.28, 8, 6), new THREE.MeshBasicMaterial({ color: a[4] ? 0xff40c0 : 0xa4ff6a }));
+      m.position.set(a[1], a[2], a[3]); scene.add(m); p = { id: a[0], m, tp: new THREE.Vector3() }; projById.set(a[0], p); projectiles.push(p);
+    }
+    p.tp.set(a[1], a[2], a[3]);
+  }
+  for (const p of [...projectiles]) if (!seenP.has(p.id)) { scene.remove(p.m); projById.delete(p.id); projectiles.splice(projectiles.indexOf(p), 1); }
+
+  const h = d.hud;
+  mission.title = h.ti; mission.text = h.tx; mission.progress = h.pg; mission.livesLeft = h.ll;
+  xp = h.xp; xpNeed = h.xn; level = h.lv; kills = h.kl; elapsed = h.el;
+  mission.boss = h.bs ? { hp: h.bs[0], maxHp: h.bs[1] } : null;
+  if (h.wp) { waypoint = waypoint || new THREE.Vector3(); waypoint.set(h.wp[0], 0, h.wp[1]); waypointHide = h.wp[2]; } else waypoint = null;
+  [mods.hp, mods.count, mods.speed, mods.edmg, mods.elite] = h.md;
+  $('oTitle').textContent = mission.title;
+
+  const ob = d.ob;
+  if (ob.gen) {
+    if (!generator) generator = makeGenerator(ob.gen[0], ob.gen[1]);
+    generator.hp = ob.gen[2]; generator.max = ob.gen[3]; generator.active = !!ob.gen[4];
+  }
+  if (ob.pods) {
+    if (!pods.length) ob.pods.forEach(p => pods.push(makePod(p[0], p[1])));
+    ob.pods.forEach((p, i) => { if (p[2] && !pods[i].got) { pods[i].got = true; scene.remove(pods[i].g); } });
+  }
+  if (ob.bea) {
+    if (!beacons.length) ob.bea.forEach(b => beacons.push(makeBeacon(b[0], b[1])));
+    ob.bea.forEach((b, i) => { const x = beacons[i]; x.progress = b[2]; if (b[3] && !x.done) { x.done = true; x.ring.material.color.set(0x5ce08a); x.col.material.color.set(0x5ce08a); } });
+  }
+  if (ob.pad && !pad) pad = makeBeacon(ob.pad[0], ob.pad[1]);
+  if (ob.zone && !zoneRing) {
+    zoneRing = new THREE.Mesh(new THREE.TorusGeometry(50, 0.35, 6, 120), new THREE.MeshBasicMaterial({ color: 0xf28c1f }));
+    zoneRing.rotation.x = Math.PI / 2; zoneRing.position.set(ob.zone[0], 0.3, ob.zone[1]); scene.add(zoneRing);
+  }
+  if (zoneRing) zoneRing.material.color.set(Math.hypot(player.pos.x - zoneRing.position.x, player.pos.z - zoneRing.position.z) < 50 ? 0x4cd68a : 0xf28c1f);
+  if (ob.pln) {
+    if (!plane) plane = makePlane();
+    const p = ob.pln;
+    plane.g.position.set(p[0], p[1], p[2]); plane.yaw = p[3]; plane.g.rotation.y = p[3]; plane.g.rotation.x = p[4];
+    plane.ramp.rotation.x = p[5]; plane.state = PLANE_ST[p[6]];
+    if ((plane.state === 'closing' || plane.state === 'takeoff') && state !== 'cinematic' && state !== 'ended') {
+      state = 'cinematic'; cinT = 0; mouseDown = false; playerGroup.visible = false; waypoint = null;
+    }
+  }
+}
+// cliente: suaviza inimigos e projéteis recebidos
+function updateClientWorld(dt) {
+  const k = 1 - Math.exp(-dt * 14);
+  for (const e of enemies) {
+    const m = e.mesh;
+    m.position.x += (e.tx - m.position.x) * k; m.position.z += (e.tz - m.position.z) * k;
+    let dr = e.tr - m.rotation.y; dr = Math.atan2(Math.sin(dr), Math.cos(dr)); m.rotation.y += dr * k;
+    e.phase += dt * (e.type === 'crawler' || e.type === 'bomber' ? 14 : 7);
+    m.position.y = Math.abs(Math.sin(e.phase)) * 0.12;
+    if (e.type === 'bomber') m.scale.setScalar(1 + 0.1 * Math.sin(e.phase * 2));
+    else if (e.type === 'charger' && e.st === 'wind') m.scale.setScalar(e.t.scale * (1 + 0.04 * Math.sin(e.phase * 8)));
+  }
+  for (const p of projectiles) if (p.tp) p.m.position.lerp(p.tp, k);
+  if (generator && generator.active) generator.core.material.emissive.set(generator.hp / generator.max < 0.3 ? 0xaa4422 : 0x2290c0);
+  for (const p of pods) if (!p.got) { p.cap.rotation.y = elapsed * 2; p.cap.position.y = 1.0 + 0.15 * Math.sin(elapsed * 3); }
+  for (const b of beacons) b.col.scale.x = b.col.scale.z = 1 + 0.2 * Math.sin(elapsed * 4);
+}
+
+// ── mensagens ──
+function onHostMessage(from, d) {
+  if (d.k === 'p') {
+    const o = ensureOther(from);
+    o.last = { x: d.x, z: d.z, y: d.y, mv: d.mv, mk: d.mk, ma: d.ma, ms: d.ms, rl: d.rl, fl: d.fl, ro: d.ro, rdy: d.rdy, dd: d.dd, hp: d.hp, mh: d.mh, sp: d.sp, wk: d.wk, w: d.w, bd: d.bd, ev: d.ev, st: d.st };
+    applyState(o, o.last);
+    if (o.status !== 'respawning' && o.status !== 'downed') o.status = d.al || state === 'cinematic' ? 'alive' : o.status;
+    if (d.sh) alertNear(o.pos, 65);
+    if (d.h) for (const [id, n] of d.h) { const e = enemies.find(x => x.id === id); if (e && n > 0 && n < 600) damageEnemy(e, n, from); }
+  } else if (d.k === 'died') onPlayerDied(from);
+  else if (d.k === 'strikeReq') { const id = uid(); addStrike(id, d.x, d.z); net.all({ k: 'strike', id, x: d.x, z: d.z }); }
+  else if (d.k === 'crateReq') hostAddCrate(d.x, d.z);
+  else if (d.k === 'crateGet') { const c = crates.find(x => x.id === d.id); if (c) { removeCrate(c); net.all({ k: 'crateGone', id: d.id }); } }
+  else if (d.k === 'dropGet') { const c = drops.find(x => x.id === d.id); if (c) { removeDrop(c); net.all({ k: 'dropGone', id: d.id }); } }
+}
+function onClientMessage(from, d) {
+  switch (d.k) {
+    case 's': if (['playing', 'loot', 'dying', 'downed', 'cinematic'].includes(state)) applySnapshot(d); break;
+    case 'start': clientStartMission(d); break;
+    case 'say': say(d.text, d.secs); break;
+    case 'fx': if (d.t === 'boom') boomFx(new THREE.Vector3(d.x, 0, d.z), d.r); break;
+    case 'crate': addCrate(d.id, d.x, d.z); break;
+    case 'crateGone': { const c = crates.find(x => x.id === d.id); if (c) removeCrate(c); break; }
+    case 'drop': addDrop(d.id, d.type, d.x, d.z); break;
+    case 'dropGone': { const c = drops.find(x => x.id === d.id); if (c) removeDrop(c); break; }
+    case 'strike': addStrike(d.id, d.x, d.z); beep(300, 0.3, 0.08); break;
+    case 'turret': addTurret(d.id, d.x, d.z, 42); break;
+    case 'turretGone': { const T = turrets.find(x => x.id === d.id); if (T) { scene.remove(T.g); turrets.splice(turrets.indexOf(T), 1); } break; }
+    case 'loot': startLootRemote(d); break;
+    case 'buff': applyBuff(d.id); break;
+    case 'dmg': damagePlayer(d.n); break;
+    case 'respawn': respawnPlayer(new THREE.Vector3(d.x, 0, d.z)); break;
+    case 'downed': break;                                   // a tela já mostra que você caiu
+    case 'end': finishMission(); presentResults(d); break;
+    case 'abort': finishMission(); clearWorld(); $('menu').classList.remove('hidden'); $('resume').style.display = 'none'; $('abort').style.display = 'none'; $('sub').textContent = 'O host abandonou a operação.'; renderAll(); break;
+  }
+}
+net.onMessage = (from, d) => { if (net.role === 'host') onHostMessage(from, d); else if (net.role === 'client') onClientMessage(from, d); };
+net.onRoster = () => {
+  const ids = new Set(net.roster.map(p => p.id));
+  for (const id of Object.keys(others)) if (!ids.has(+id)) removeOther(+id);
+  for (const p of net.roster) { const o = others[p.id]; if (o && o.name !== p.name) { o.name = p.name; setNameTag(o.group, p.name); } }
+  renderOnline(); renderOps();
+  if (!missionBusy() && state !== 'ended') $('sub').textContent = net.role === 'solo' ? 'Pronto para o deploy.' : `Sala ${net.code} · ${net.roster.length} jogador(es)`;
+};
+net.onLeft = id => { removeOther(id); delete respawnTimers[id]; };
+net.onClosed = msg => {
+  if (missionBusy() || uiOpen) { finishMission(); clearWorld(); }
+  clearOthers(); state = state === 'ended' ? 'ended' : 'menu';
+  $('menu').classList.remove('hidden'); $('resume').style.display = 'none'; $('abort').style.display = 'none';
+  $('sub').textContent = msg; renderAll();
+};
+
+function clientStartMission(d) {
+  ensureAudio();
+  if (missionBusy()) { clearWorld(); }
+  relax = !!d.relax;
+  clearWorld();
+  applyBiome(d.biome);
+  opLayout = null;
+  buildTerrain(d.R, 0, [], d.rocks);
+  kills = 0; elapsed = 0; shake = 0;
+  [mods.hp, mods.count, mods.speed, mods.edmg, mods.elite] = d.mods;
+  xp = 0; level = 1; xpNeed = 60; pendingLoot = 0; buffs = { dmg: 0, shield: 0 };
+  stats = { shots: 0, hits: 0, supplies: 0, orbitals: 0, deaths: 0 };
+  resetLocalPlayer();
+  mission = { id: d.id, title: d.title, text: '', progress: 0, lives: d.lives, livesLeft: d.lives, par: d.par, tier: d.tier, boss: null, update: null, onKill: null };
+  for (const p of net.roster) if (p.id !== net.id) { const o = ensureOther(p.id); o.status = 'alive'; o.seen = 0; o.last = null; o.ev = null; o.bd = false; o.st = {}; o.group.visible = true; resetRig(o.rig); }
+  const sp = d.spawn[net.id];
+  if (sp) { player.pos.set(sp[0], 0, sp[1]); player.yaw = sp[2]; }
+  checkpoint.copy(player.pos);
+  afterMissionBuilt(d.id);
+  state = 'playing'; uiOpen = true;
+  $('clickGo').classList.add('on');                         // o navegador exige um clique para capturar o mouse
+  say('Operação iniciada!', 3);
+}
+
+// ── barra de equipe e lobby ──
+function updateParty(dt) {
+  partyT -= dt; if (partyT > 0) return; partyT = 0.3;
+  const list = Object.values(others);
+  $('party').innerHTML = list.map(o => {
+    const pct = Math.max(0, Math.min(100, (o.hp || 0) / (o.mh || 100) * 100));
+    return `<div class="pm ${o.st.dd ? 'dead' : ''}"><b>${o.name}</b><div class="meter"><i style="width:${pct}%"></i></div></div>`;
+  }).join('');
+}
+function renderOnline() {
+  const pane = $('pane-online'); if (!pane) return;
+  const inRoom = net.role !== 'solo';
+  const roster = net.roster.map(p => `<div class="pm-row"><span>${p.host ? '★ ' : ''}${p.name}${p.id === net.id ? ' (você)' : ''}</span><i>${p.host ? 'HOST' : 'JOGADOR'}</i></div>`).join('');
+  pane.innerHTML = `
+    <h2 class="sec">Jogo online · até 4 jogadores · só entra quem tem o código do host</h2>
+    <div class="grid">
+      <div class="card">
+        <small class="k">PERFIL</small><h4>Seu nome</h4>
+        <p>Aparece sobre a sua cabeça para os outros jogadores. Créditos, melhorias e recordes ficam salvos <b>só neste computador</b>.</p>
+        <input class="field" id="nameIn" maxlength="16" placeholder="Seu nome" value="${(save.name || '').replace(/"/g, '')}" ${inRoom ? 'disabled' : ''}>
+      </div>
+      ${inRoom ? `
+      <div class="card">
+        <small class="k">${net.role === 'host' ? 'VOCÊ É O HOST' : 'CONECTADO'}</small><h4>Sala</h4>
+        <div class="roomcode" id="roomCode">${net.code}</div>
+        <p>${net.role === 'host' ? 'Passe este código aos amigos. Depois escolha a operação na aba OPERAÇÕES.' : 'Aguarde o host iniciar a operação.'}</p>
+        <div class="pm-list">${roster}</div>
+        <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+          ${net.role === 'host' ? '<button class="btn" id="copyBtn">Copiar código</button>' : ''}
+          <button class="btn ghost" id="leaveBtn">Sair da sala</button></div>
+      </div>` : `
+      <div class="card">
+        <small class="k">HOST</small><h4>Criar sala</h4>
+        <p>Você roda o mundo e escolhe a operação. Os outros jogadores entram com o código.</p>
+        <button class="btn primary" id="hostBtn">Criar sala</button>
+      </div>
+      <div class="card">
+        <small class="k">CÓDIGO</small><h4>Entrar na sala de um amigo</h4>
+        <p>Digite o código de 5 caracteres que o host enviou.</p>
+        <input class="field code" id="codeIn" maxlength="5" placeholder="ABCDE">
+        <button class="btn primary" id="joinBtn" style="margin-top:10px">Entrar</button>
+      </div>`}
+    </div>
+    <div id="onlineMsg" class="onlinemsg"></div>`;
+  const msg = t => { const el = $('onlineMsg'); if (el) el.textContent = t; };
+  const nm = $('nameIn');
+  if (nm) nm.oninput = () => { save.name = nm.value.replace(/[<>]/g, '').slice(0, 16); persist(); setNameTag(playerGroup, myName()); };
+  const doRoom = async fn => {
+    if (missionBusy()) return;
+    if (nm) { save.name = nm.value.trim().slice(0, 16) || 'Jogador'; persist(); }
+    msg('Conectando…');
+    try { await fn(); renderAll(); showTab('online'); } catch (e) { msg(e.message || 'Falha ao conectar.'); }
+  };
+  if ($('hostBtn')) $('hostBtn').onclick = () => doRoom(() => net.host(myName()));
+  if ($('joinBtn')) $('joinBtn').onclick = () => doRoom(() => net.join(($('codeIn').value || '').trim().toUpperCase(), myName()));
+  if ($('codeIn')) $('codeIn').oninput = e => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); };
+  if ($('leaveBtn')) $('leaveBtn').onclick = () => { net.leave(); clearOthers(); $('sub').textContent = 'Pronto para o deploy.'; renderAll(); showTab('online'); };
+  if ($('copyBtn')) $('copyBtn').onclick = () => { try { navigator.clipboard.writeText(net.code); msg('Código copiado!'); } catch { msg('Código: ' + net.code); } };
 }
 
 // ───────────────────────── Loop ─────────────────────────
@@ -1911,37 +2461,48 @@ function loop() {
 }
 
 let lastModSec = -1;
+// host/solo: mundo, inimigos e missão
+function simStep(dt) {
+  elapsed += dt;
+  spawnLogic(dt);
+  updatePlatoons(dt);
+  updateEnemies(dt);
+  updateProjectiles(dt);
+  updateTurrets(dt);
+  mission.update(dt);
+  updateEffects(dt);
+  hostTimers(dt);
+  if (Math.floor(elapsed) !== lastModSec) { lastModSec = Math.floor(elapsed); refreshMods(); }
+}
+function followSun() { sun.position.set(player.pos.x + 40, 60, player.pos.z + 20); sun.target.position.copy(player.pos); }
+
 function tick(dt) {
+  if (net.role === 'client' && mission && ['playing', 'loot', 'dying', 'downed', 'cinematic'].includes(state)) return tickClient(dt);
   if (state === 'playing') {
-    elapsed += dt;
     updatePlayer(dt);
     updateCamera();
-    spawnLogic(dt);
-    updatePlatoons(dt);
-    updateEnemies(dt);
-    updateProjectiles(dt);
-    updateTurrets(dt);
-    mission.update(dt);
-    updateEffects(dt);
-    updateHud();
-    if (Math.floor(elapsed) !== lastModSec) { lastModSec = Math.floor(elapsed); refreshMods(); }
-    sun.position.set(player.pos.x + 40, 60, player.pos.z + 20);
-    sun.target.position.copy(player.pos);
+    updateOthers(dt);
+    simStep(dt);
+    updateHud(); updateParty(dt); netHost(dt);
+    followSun();
   } else if (state === 'loot') {
     player.moving = false;
     animate(dt);
     updateCamera();
+    updateOthers(dt);
     updateLoot(dt);
   } else if (state === 'cinematic') {
     updateCinematic(dt);
+    updateOthers(dt);
     updateEffects(dt);
-  } else if (state === 'dying') {
+    netHost(dt);
+  } else if (state === 'dying' || state === 'downed') {
     animate(dt);
     updateCamera();
-    updateProjectiles(dt);
-    updateEffects(dt);
-    dyingT -= dt;
-    if (dyingT <= 0) { if (mission.livesLeft > 0) respawnPlayer(); else endMission(false); }
+    updateOthers(dt);
+    simStep(dt);
+    updateHud(); updateParty(dt); netHost(dt);
+    if (state === 'dying') { dyingT -= dt; if (dyingT <= 0) state = 'downed'; }
   } else {
     // Câmera lenta orbitando no menu
     const a = performance.now() / 8000;
@@ -1950,13 +2511,28 @@ function tick(dt) {
   }
 }
 
+// cliente: o host simula; aqui só entram o jogador local, a interpolação e os efeitos
+function tickClient(dt) {
+  updateClientWorld(dt); updateOthers(dt); updateEffects(dt); updateTurrets(dt);
+  if (state === 'playing') {
+    elapsed += dt; updatePlayer(dt); updateCamera(); localBoardingCheck(); updateHud(); updateParty(dt);
+  } else if (state === 'loot') {
+    player.moving = false; animate(dt); updateCamera(); updateLoot(dt);
+  } else if (state === 'dying' || state === 'downed') {
+    animate(dt); updateCamera(); updateHud(); updateParty(dt);
+    if (state === 'dying') { dyingT -= dt; if (dyingT <= 0) state = 'downed'; }
+  } else if (state === 'cinematic') updateCinematic(dt);
+  sendClientState(dt);
+  followSun();
+}
+
 buildMenu();
 loop();
 
 // Gancho para testes automatizados e futuro multiplayer (estado serializável)
-window.__freedivers = {
+window.__freedivers = window.__multipunk = {
   player, keys, tick, startMission,
   get enemies() { return enemies; }, get state() { return state; }, get kills() { return kills; },
   get mission() { return mission; }, setMouse(v) { mouseDown = v; },
-  get camPos() { return camPos; }, get generator() { return generator; }, get strikes() { return strikes; }, switchWeapon, callStrike, spawnEnemy, damageEnemy, get pods() { return pods; }, endMission, get save() { return save; }, get level() { return level; }, get mods() { return mods; }, addXp, get platoons() { return platoons; }, get plane() { return plane; }, get opLayout() { return opLayout; }, get stats() { return stats; }, get xpNeed() { return xpNeed; }, respawnPlayer, abortMission, computeScore, get checkpoint() { return checkpoint; }, get wts() { return wts; }, damage: n => damagePlayer(n), get beacons() { return beacons; }, get pad() { return pad; },
+  get camPos() { return camPos; }, get generator() { return generator; }, get strikes() { return strikes; }, switchWeapon, callStrike, spawnEnemy, damageEnemy, get pods() { return pods; }, endMission, get save() { return save; }, get level() { return level; }, get mods() { return mods; }, addXp, get platoons() { return platoons; }, get plane() { return plane; }, get opLayout() { return opLayout; }, get stats() { return stats; }, get xpNeed() { return xpNeed; }, respawnPlayer, abortMission, computeScore, get checkpoint() { return checkpoint; }, net, others, get enemyById() { return enemyById; }, get crates() { return crates; }, get drops() { return drops; }, get turrets() { return turrets; }, get uiOpen() { return uiOpen; }, buildSnapshot, applySnapshot, killsBy: () => killsBy, set stateX(v) { state = v; }, get wts() { return wts; }, damage: n => damagePlayer(n), get beacons() { return beacons; }, get pad() { return pad; },
 };

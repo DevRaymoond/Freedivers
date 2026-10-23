@@ -1,0 +1,34 @@
+// Teste do relé de salas: node tools/test_relay.js   (sobe o servidor numa porta de teste)
+const { spawn } = require('child_process');
+const WebSocket = require('ws');
+const PORT = 18765;
+const srv = spawn(process.execPath, ['server.js'], { env: { ...process.env, PORT, HOST: '127.0.0.1' }, stdio: ['ignore', 'pipe', 'inherit'] });
+const open = () => new Promise(r => { const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`); ws.inbox = []; ws.on('message', d => ws.inbox.push(JSON.parse(d))); ws.on('open', () => r(ws)); });
+const wait = ms => new Promise(r => setTimeout(r, ms));
+const send = (ws, o) => ws.send(JSON.stringify(o));
+const last = (ws, t) => [...ws.inbox].reverse().find(m => m.t === t);
+let fails = 0;
+const check = (name, ok) => { console.log((ok ? 'OK   ' : 'FALHA'), name); if (!ok) fails++; };
+(async () => {
+  await wait(700);
+  const host = await open(), a = await open(), b = await open(), c = await open(), d = await open();
+  send(host, { t: 'host', name: 'Ray' }); await wait(100);
+  const code = last(host, 'hosted').code; check('host recebe código de 5 caracteres', /^[A-Z2-9]{5}$/.test(code));
+  send(a, { t: 'join', code: 'ZZZZZ', name: 'x' }); await wait(80); check('código errado é recusado', !!last(a, 'err'));
+  send(a, { t: 'join', code: code.toLowerCase(), name: 'Ana' }); await wait(80); check('entra com código (sem diferenciar maiúsculas)', !!last(a, 'joined'));
+  send(b, { t: 'join', code, name: 'Bia' }); send(c, { t: 'join', code, name: 'Caio' }); await wait(100);
+  check('terceiro cliente entra (4 jogadores)', !!last(c, 'joined'));
+  send(d, { t: 'join', code, name: 'Dani' }); await wait(80); check('quinto jogador é recusado (sala cheia)', !!last(d, 'err'));
+  check('lista de jogadores com 4 nomes', last(host, 'players').players.map(p => p.name).join() === 'Ray,Ana,Bia,Caio');
+  send(a, { t: 'to', to: 'host', d: { hello: 1 } }); await wait(60); check('cliente → host', last(host, 'm') && last(host, 'm').d.hello === 1 && last(host, 'm').from === 2);
+  send(a, { t: 'to', to: 'all', d: { x: 1 } }); await wait(60); check('cliente não consegue falar com os outros clientes', !last(b, 'm'));
+  send(host, { t: 'to', to: 'all', d: { snap: 1 } }); await wait(60); check('host → todos', !!last(a, 'm') && !!last(b, 'm') && !!last(c, 'm'));
+  send(host, { t: 'to', to: 3, d: { solo: 1 } }); await wait(60); check('host → um cliente', last(b, 'm').d.solo === 1 && last(a, 'm').d.snap === 1);
+  send(host, { t: 'lock', locked: true }); await wait(60);
+  const e = await open(); send(e, { t: 'join', code, name: 'Eva' }); await wait(80); check('sala travada recusa novos jogadores', !!last(e, 'err'));
+  b.close(); await wait(100); check('host é avisado quando um cliente sai', !!last(host, 'left') && last(host, 'left').id === 3);
+  host.close(); await wait(100); check('clientes são avisados quando o host sai', !!last(a, 'closed'));
+  send(c, { t: 'join', code, name: 'Caio' }); await wait(80); check('sala encerrada não aceita mais ninguém', !!last(c, 'err'));
+  console.log(fails ? `${fails} falha(s)` : 'todos os testes passaram');
+  srv.kill(); process.exit(fails ? 1 : 0);
+})();
