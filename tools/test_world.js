@@ -41,16 +41,19 @@ const check = (name, ok, extra) => { console.log(ok ? 'OK   ' : 'FALHA', name, o
   check('a soma continua 100% em todos os setores', [...sec2.values()].every(v => v.h + v.i + v.r === W.SCALE && v.h >= 0 && v.i >= 0 && v.r >= 0));
 
   // dinamismo: fronteiras entre insetos e robôs surgem sozinhas
-  const sec3 = W.seedSectors(idx), enemyCount = () => [...sec3.values()].filter(v => !W.isHuman(v)).length, ft = () => [...sec3.values()].filter(v => v.h < W.SCALE).length;
+  const sec3 = W.seedSectors(idx), enemyCount = () => [...sec3.values()].filter(v => v.i >= W.HUMAN_MIN || v.r >= W.HUMAN_MIN).length, ft = () => [...sec3.values()].filter(v => v.h < W.SCALE).length;
   W.warTick(idx, sec3, 1);
   const edge = [...sec3.entries()].find(([k, v]) => v.h === W.SCALE - 9);
   check('um minuto de guerra avança 9 pontos (0,09%) por setor atacado, sem sorteio', !!edge && [...sec3.values()].every(v => v.h === W.SCALE || v.h === W.SCALE - 9 || v.i === W.SCALE || v.r === W.SCALE));
-  for (let t = 1; t < 1440; t++) W.warTick(idx, sec3, t + 7);
+  let maxBusy = 0;
+  const step = t => { const before = new Map([...sec3].map(([k, v]) => [k, { ...v }])); W.warTick(idx, sec3, t + 7); for (const f of ['i', 'r']) maxBusy = Math.max(maxBusy, [...sec3].filter(([k, v]) => v[f] > before.get(k)[f] && v[f] < W.HUMAN_MIN).length); };
+  for (let t = 1; t < 1440; t++) step(t);
   const day1 = enemyCount();
-  check('em 1 dia caem só os dois primeiros anéis de setores', day1 >= 8 && day1 <= 80, 'setores inimigos: ' + day1);
-  for (let t = 1440; t < 1440 * 6; t++) W.warTick(idx, sec3, t + 7);
-  const day6 = enemyCount();
-  check('em ~6 dias, sem os jogadores, o planeta quase todo caiu (o último reduto resiste)', day6 >= sec3.size - 8, 'setores inimigos: ' + day6 + ' de ' + sec3.size);
+  check('em 1 dia só caem os primeiros setores (3 por vez por facção)', day1 >= 8 && day1 <= 16, 'setores inimigos: ' + day1);
+  for (let t = 1440; t < 1440 * 45; t++) step(t);
+  const day45 = enemyCount();
+  check('cada facção empurra no máximo 3 setores por vez até os 70%', maxBusy <= 3, 'máx: ' + maxBusy);
+  check('em ~45 dias, sem os jogadores, o planeta quase todo caiu (o último reduto resiste)', day45 >= sec3.size - 8, 'setores inimigos: ' + day45 + ' de ' + sec3.size);
   check('o ganho de uma partida é proporcional ao tempo-meta (5 min = 0,45%)', W.MISSION_POINTS.samples === 45 && W.MISSION_POINTS.operation === 144);
   
   const fixo = { h: W.SCALE, i: 0, r: 0 }, soft = { h: 9000, i: 1000, r: 0 };

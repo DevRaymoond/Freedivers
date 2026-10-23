@@ -58,3 +58,6 @@
 ## 2026-10-23 (dominado a 70%, reivindicado a 100%)
 - `HUMAN_MIN` passa de 50% para 70%: o setor é dominado com 70% ou mais e **reivindicado** com 100% (antes "fixo"), tanto para os humanos quanto para as facções.
 - O inimigo só passa a empurrar os vizinhos quando domina o setor (70%), mas continua empurrando o próprio setor até 100%. Corrigido: antes ele parava ao passar do limite. Sem jogadores, o planeta cai em ~6 dias. O bônus de resistência do setor fixo foi removido.
+
+## 2026-10-23 (3 setores por vez)
+- Cada facção empurra no máximo **3 setores por vez** até eles chegarem a 70% (`MAX_PUSH`); os dominados seguem até 100% sem ocupar vaga. Vagas: primeiro os em andamento em que a facção lidera, depois os novos; quem perde a disputa com a outra facção fica por último (evita setores empatados travando as vagas). Sem jogadores, o planeta cai em ~30 dias.

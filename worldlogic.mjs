@@ -89,14 +89,24 @@ export function applyWin(s, missionId, level) {
 export const LOSS_RATIO = 0.25;                                          // derrota: os humanos perdem 1/4 do que a vitória renderia e o inimigo ganha o mesmo tanto
 export function applyLoss(s, missionId, level) { const d = enemyOf(s) === 'I' ? 'i' : 'r'; return -move(s, 'h', d, Math.round(missionGain(missionId, level) * LOSS_RATIO)); }
 
-// Passo da guerra (a cada minuto): avanço contínuo e fixo. Cada facção empurra, ENEMY_PTS_PER_MIN pontos por minuto, todo setor vizinho de um setor
-// que ela já domina (70% ou mais), até o setor chegar a 100% (reivindicado). Setores atrás de território humano ficam fora de alcance. Os jogadores seguram o avanço vencendo missões.
+// Passo da guerra (a cada minuto): avanço contínuo e fixo de ENEMY_PTS_PER_MIN pontos por minuto. Cada facção empurra no máximo MAX_PUSH setores ao mesmo tempo
+// até eles chegarem a 70% (dominado); só quem já domina um setor alcança os vizinhos. Os setores dominados seguem até 100% (reivindicado) sem ocupar vaga.
+// Setores atrás de território humano ficam fora de alcance. Os jogadores seguram o avanço vencendo missões.
+export const MAX_PUSH = 3;
 export function warTick(idx, sec, seed, minHumanSectors = 3, pts = ENEMY_PTS_PER_MIN) {
   const events = [], changed = new Set();
   for (const f of ['I', 'R']) {
-    const fl = f.toLowerCase(), targets = new Set();
-    for (const o of idx.cells) { const k = key(o.c, o.r); if (sec.get(k)[fl] >= HUMAN_MIN) for (const n of idx.nbr.get(k)) if (sec.get(n)[fl] < SCALE) targets.add(n); }
-    for (const tk of targets) {
+    const fl = f.toLowerCase(), reach = new Set(), finishing = [];
+    for (const o of idx.cells) {
+      const k = key(o.c, o.r), s = sec.get(k);
+      if (s[fl] >= HUMAN_MIN) { if (s[fl] < SCALE) finishing.push(k); for (const n of idx.nbr.get(k)) if (sec.get(n)[fl] < HUMAN_MIN) reach.add(n); }
+    }
+    // vagas: primeiro os setores que já estão em andamento e onde a facção lidera (mais avançados antes), depois os novos (sorteio estável);
+    // quem está perdendo a disputa com a outra facção fica por último, para as duas não travarem as vagas empatadas para sempre
+    const ot = fl === 'i' ? 'r' : 'i', rank = k => { const v = sec.get(k); return v[fl] === 0 ? 1 : v[fl] >= v[ot] ? 2 : 0; };
+    const tie = k => hash2(seed >>> 3, idx.byKey.get(k).c * 64 + idx.byKey.get(k).r);
+    const order = [...reach].sort((x, y) => rank(y) - rank(x) || sec.get(y)[fl] - sec.get(x)[fl] || tie(x) - tie(y));
+    for (const tk of [...order.slice(0, MAX_PUSH), ...finishing]) {
       const t = sec.get(tk), tc = idx.byKey.get(tk);
       const def = ['h', 'i', 'r'].filter(x => x !== fl).sort((x, y) => t[y] - t[x])[0];
       if (!t[def]) continue;
