@@ -901,6 +901,16 @@ function updateTurrets(dt) {
   }
 }
 
+// ───────────────────────── Objetivo concluído ─────────────────────────
+let objTimer = 0;
+function showObjectiveDone(title, text, kick = 'OBJETIVO CONCLUÍDO') {
+  $('odKick').textContent = kick; $('odTitle').textContent = title; $('odText').textContent = text;
+  const el = $('objDone'); el.classList.add('on');
+  clearTimeout(objTimer); objTimer = setTimeout(() => el.classList.remove('on'), 7500);
+  beep(523, 0.18, 0.1); setTimeout(() => beep(659, 0.18, 0.1), 140); setTimeout(() => beep(784, 0.35, 0.12), 280);
+}
+function objectiveDone(title, text, kick) { showObjectiveDone(title, text, kick); net.all({ k: 'objdone', title, text, kick }); }
+
 // ───────────────────────── Missões ─────────────────────────
 function makeBeacon(x, z) {
   const g = new THREE.Group();
@@ -1075,7 +1085,7 @@ function updateOperation(m, dt) {
           const geo = new THREE.TorusGeometry(50, 0.35, 6, 120);
           zoneRing = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xf28c1f }));
           zoneRing.rotation.x = Math.PI / 2; zoneRing.position.set(L.E.x, 0.3, L.E.z); scene.add(zoneRing);
-          sayAll('Gerador estável! Siga para a zona de extração.', 4);
+          objectiveDone('Gerador estabilizado', `${op.waves} ondas contidas em ${fmtTime(elapsed)}. Siga até a zona de extração (raio de 50 m) e segure a posição por 1:30.`);
         } else { op.countdown = 10; sayAll(`Onda ${op.wave} contida! Próxima em 10 s.`, 2.5); }
       }
     }
@@ -1097,7 +1107,8 @@ function updateOperation(m, dt) {
       plane.start.copy(plane.land).addScaledVector(fwd, -260).setY(85);
       plane.g.rotation.y = plane.yaw;
       plane.g.position.copy(plane.start);
-      sayAll('A nave de extração está chegando!', 4); beep(180, 0.6, 0.12);
+      objectiveDone('Extração liberada', 'Contagem concluída: a nave de extração está descendo. Aguarde o pouso e entre pela rampa traseira — todos precisam embarcar.', 'ZONA SEGURA');
+      beep(180, 0.6, 0.12);
     }
   } else if (op.phase === 'plane') {
     plane.t += dt;
@@ -1295,7 +1306,7 @@ function buildMission(id) {
           m.phase = 2;
           const a = Math.random() * Math.PI * 2;
           pad = makeBeacon(Math.cos(a) * 50, Math.sin(a) * 50);
-          sayAll('Brutamontes abatidos! Vá até a zona de extração!', 4);
+          objectiveDone('Brutamontes abatidos', 'Vá até a zona de extração e aguarde o transporte.');
         }
       }
     };
@@ -1354,6 +1365,7 @@ function clearWorld() {
   if (pad) { scene.remove(pad.g); pad = null; }
   if (zoneRing) { scene.remove(zoneRing); zoneRing = null; }
   if (plane) { scene.remove(plane.g); plane = null; }
+  $('objDone').classList.remove('on');
   waypoint = null; waypointHide = 0; lootRun = null; enemyById.clear(); projById.clear();
   Object.values(others).forEach(o => { o.group.visible = false; });
   $('loot').classList.remove('on'); $('mods').innerHTML = ''; $('party').innerHTML = '';
@@ -1495,6 +1507,8 @@ function presentResults(r) {
   const record = r.win && (prev == null || r.total > prev);
   if (record) save.best[r.mid] = r.total;
   persist(); renderAll();
+  $('results').classList.toggle('win', !!r.win); $('results').classList.toggle('lose', !r.win);
+  $('resBadge').textContent = r.win ? 'VITÓRIA' : 'DERROTA';
   $('resKicker').textContent = (r.win ? 'OPERAÇÃO CONCLUÍDA' : 'OPERAÇÃO FALHOU') + ' · ' + r.title.toUpperCase();
   $('resTitle').textContent = r.win ? (r.mid === 'operation' ? 'Extração confirmada' : 'Missão cumprida') : 'Esquadrão perdido';
   $('resRows').innerHTML = r.rows.map((x, i) =>
@@ -2482,6 +2496,7 @@ function onClientMessage(from, d) {
     case 's': if (['playing', 'loot', 'dying', 'downed', 'cinematic'].includes(state)) applySnapshot(d); break;
     case 'start': clientStartMission(d); break;
     case 'say': say(d.text, d.secs); break;
+    case 'objdone': showObjectiveDone(d.title, d.text, d.kick); break;
     case 'fx': if (d.t === 'boom') boomFx(new THREE.Vector3(d.x, 0, d.z), d.r); break;
     case 'crate': addCrate(d.id, d.x, d.z); break;
     case 'crateGone': { const c = crates.find(x => x.id === d.id); if (c) removeCrate(c); break; }
@@ -2599,6 +2614,35 @@ function renderOnline() {
   if ($('copyBtn')) $('copyBtn').onclick = () => { try { navigator.clipboard.writeText(net.code); msg('Código copiado!'); } catch { msg('Código: ' + net.code); } };
 }
 
+// ───────────────────────── Validador de versão ─────────────────────────
+// O servidor entrega a versão carregada na página e publica a versão atual em /version.json. Quando elas diferem, o modal de
+// atualização só aparece para quem está no menu principal; quem está jogando (ou pausado no jogo) nunca é interrompido.
+const loadedVersion = (document.querySelector('meta[name="app-version"]') || {}).content || '';
+net.version = loadedVersion === '__VERSION__' ? '' : loadedVersion;
+let newVersion = null, updDismissedAt = 0;
+async function checkVersion() {
+  if (!net.version) return;                                   // aberto fora do servidor (arquivo local): nada a validar
+  try {
+    const j = await (await fetch('/version.json', { cache: 'no-store' })).json();
+    if (j.version && j.version !== net.version) newVersion = j.version;
+  } catch { /* sem rede: tenta de novo depois */ }
+}
+const atMainMenu = () => ['menu', 'ended'].includes(state) && !uiOpen && !missionBusy() &&
+  !$('menu').classList.contains('hidden') && !$('results').classList.contains('on');
+function updateModalTick() {
+  const modal = $('updateModal');
+  if (newVersion && atMainMenu() && Date.now() - updDismissedAt > 10 * 60 * 1000) {
+    $('updText').textContent = 'Saiu uma versão nova do Multipunk. Atualize a página para jogar com as novidades.' + (net.role !== 'solo' ? ' Você vai sair da sala online atual.' : '');
+    modal.classList.add('on');
+  } else modal.classList.remove('on');
+}
+$('updNow').onclick = () => location.reload();
+$('updLater').onclick = () => { updDismissedAt = Date.now(); $('updateModal').classList.remove('on'); };
+setInterval(checkVersion, 30000);
+setInterval(updateModalTick, 1000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkVersion(); });
+setTimeout(checkVersion, 3000);
+
 // ───────────────────────── Loop ─────────────────────────
 let lastFrame = performance.now();
 let cursorOn = null;
@@ -2684,5 +2728,5 @@ window.__freedivers = window.__multipunk = {
   player, keys, tick, startMission,
   get enemies() { return enemies; }, get state() { return state; }, get kills() { return kills; },
   get mission() { return mission; }, setMouse(v) { mouseDown = v; },
-  get camPos() { return camPos; }, get rocks() { return rocks; }, get generator() { return generator; }, get strikes() { return strikes; }, switchWeapon, callStrike, spawnEnemy, damageEnemy, get pods() { return pods; }, endMission, get save() { return save; }, get level() { return level; }, get mods() { return mods; }, addXp, get platoons() { return platoons; }, get plane() { return plane; }, get opLayout() { return opLayout; }, get stats() { return stats; }, get xpNeed() { return xpNeed; }, respawnPlayer, abortMission, computeScore, get checkpoint() { return checkpoint; }, net, others, get enemyById() { return enemyById; }, get crates() { return crates; }, get drops() { return drops; }, get turrets() { return turrets; }, get uiOpen() { return uiOpen; }, buildSnapshot, applySnapshot, killsBy: () => killsBy, set stateX(v) { state = v; }, get wts() { return wts; }, damage: n => damagePlayer(n), get beacons() { return beacons; }, get pad() { return pad; },
+  get camPos() { return camPos; }, get rocks() { return rocks; }, get generator() { return generator; }, get strikes() { return strikes; }, switchWeapon, callStrike, spawnEnemy, damageEnemy, get pods() { return pods; }, endMission, get save() { return save; }, get level() { return level; }, get mods() { return mods; }, addXp, get platoons() { return platoons; }, get plane() { return plane; }, get opLayout() { return opLayout; }, get stats() { return stats; }, get xpNeed() { return xpNeed; }, respawnPlayer, abortMission, computeScore, get checkpoint() { return checkpoint; }, get loadedVersion() { return net.version; }, checkVersion, get newVersion() { return newVersion; }, updateModalTick, net, others, get enemyById() { return enemyById; }, get crates() { return crates; }, get drops() { return drops; }, get turrets() { return turrets; }, get uiOpen() { return uiOpen; }, buildSnapshot, applySnapshot, killsBy: () => killsBy, set stateX(v) { state = v; }, get wts() { return wts; }, damage: n => damagePlayer(n), get beacons() { return beacons; }, get pad() { return pad; },
 };

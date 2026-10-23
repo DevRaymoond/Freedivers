@@ -32,6 +32,9 @@ PORT=8765 node server.js            # escuta em 0.0.0.0 (use HOST=127.0.0.1 atr�
 - `deploy/nginx.conf`: proxy com HTTPS e WebSocket em `/ws` (certificado via certbot).
 - Variáveis: `PORT`, `HOST`, `ALLOWED_ORIGINS` (lista de origens permitidas no WebSocket), `DEV=1` (libera `/tools`).
 - `/health` responde `ok`. O servidor só faz o relé das salas: não guarda nada dos jogadores.
+- **Validador de versão:** a versão é o hash dos arquivos do jogo (muda sozinha ao atualizar o código na VPS; `/version.json`). O
+  navegador confere a cada 30 s: se saiu versão nova, abre um modal pedindo para atualizar a página, **só para quem está no menu
+  principal** — quem está em partida (ou pausado nela) nunca é interrompido. Quem está com versão antiga não entra em sala de versão nova.
 - `node tools/test_relay.js` testa as regras das salas (código, limite de 4, sala travada, saída do host).
 
 ## Operações

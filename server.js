@@ -9,6 +9,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
+const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 
 const root = __dirname;
@@ -38,9 +39,32 @@ function sendFile(req, res, file) {
     fs.readFile(file, (e, buf) => { if (e) { res.writeHead(500); return res.end(); } zlib.gzip(buf, (e2, gz) => { if (e2) { res.writeHead(500); return res.end(); } gzCache.set(key, gz); done(gz); }); });
   });
 }
+// Versão = hash do conteúdo dos arquivos do jogo. Muda sozinha quando você atualiza o código na VPS.
+const APP_FILES = ['index.html', 'main.js', 'net.js', 'cursor.js', 'assets/character.glb'];
+let verCache = { sig: '', hash: 'dev' };
+function appVersion() {
+  let sig = '';
+  for (const f of APP_FILES) { try { const st = fs.statSync(path.join(root, f)); sig += `${f}:${st.size}:${st.mtimeMs};`; } catch { sig += f + '?;'; } }
+  if (sig !== verCache.sig) {
+    const h = crypto.createHash('md5');
+    for (const f of APP_FILES) { try { h.update(fs.readFileSync(path.join(root, f))); } catch { /* arquivo ausente */ } }
+    verCache = { sig, hash: h.digest('hex').slice(0, 10) };
+  }
+  return verCache.hash;
+}
+function sendIndex(req, res) {
+  fs.readFile(path.join(root, 'index.html'), 'utf8', (err, html) => {
+    if (err) { res.writeHead(404); return res.end('404'); }
+    const body = Buffer.from(html.replace('content="__VERSION__"', `content="${appVersion()}"`));
+    const headers = { 'Content-Type': types['.html'], 'Cache-Control': 'no-cache' };
+    if (/\bgzip\b/.test(req.headers['accept-encoding'] || '')) zlib.gzip(body, (e, gz) => { res.writeHead(200, { ...headers, 'Content-Encoding': 'gzip' }); res.end(e ? body : gz); });
+    else { res.writeHead(200, headers); res.end(body); }
+  });
+}
 const server = http.createServer((req, res) => {
   let p = decodeURIComponent((req.url || '/').split('?')[0]);
-  if (p === '/') p = '/index.html';
+  if (p === '/' || p === '/index.html') return sendIndex(req, res);
+  if (p === '/version.json') { res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); return res.end(JSON.stringify({ version: appVersion() })); }
   if (p === '/health') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('ok'); }
   if (p.includes('..') || !allowed(p)) { res.writeHead(404); return res.end('404'); }
   sendFile(req, res, path.join(root, p));
@@ -101,7 +125,7 @@ wss.on('connection', (ws, req) => {
       const code = newCode();
       if (!code) return send(ws, { t: 'err', msg: 'Servidor cheio. Tente de novo.' });
       meta.name = cleanName(m.name); meta.id = 1;
-      const room = { code, host: ws, clients: new Map(), locked: false };
+      const room = { code, host: ws, clients: new Map(), locked: false, version: String(m.ver || '') };
       rooms.set(code, room); meta.room = room;
       send(ws, { t: 'hosted', code, id: 1 });
       broadcastRoster(room);
@@ -109,6 +133,7 @@ wss.on('connection', (ws, req) => {
       leave(ws);
       const room = rooms.get(String(m.code || '').toUpperCase().trim());
       if (!room) return send(ws, { t: 'err', msg: 'Código inválido ou sala encerrada.' });
+      if (room.version && m.ver && room.version !== String(m.ver)) return send(ws, { t: 'err', msg: 'Seu jogo está em outra versão. Atualize a página (F5) e tente de novo.' });
       if (room.locked) return send(ws, { t: 'err', msg: 'Essa sala já iniciou a operação.' });
       if (room.clients.size + 1 >= MAX_PLAYERS) return send(ws, { t: 'err', msg: 'Sala cheia (máx. 4 jogadores).' });
       let id = 2; while (room.clients.has(id)) id++;

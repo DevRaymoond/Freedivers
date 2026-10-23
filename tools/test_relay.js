@@ -29,6 +29,13 @@ const check = (name, ok) => { console.log((ok ? 'OK   ' : 'FALHA'), name); if (!
   b.close(); await wait(100); check('host é avisado quando um cliente sai', !!last(host, 'left') && last(host, 'left').id === 3);
   host.close(); await wait(100); check('clientes são avisados quando o host sai', !!last(a, 'closed'));
   send(c, { t: 'join', code, name: 'Caio' }); await wait(80); check('sala encerrada não aceita mais ninguém', !!last(c, 'err'));
+  const h2 = await open(), v1 = await open(), v2 = await open();
+  send(h2, { t: 'host', name: 'Vera', ver: 'aaa' }); await wait(80);
+  const code2 = last(h2, 'hosted').code;
+  send(v1, { t: 'join', code: code2, name: 'Old', ver: 'bbb' }); await wait(80);
+  check('versão diferente da sala é recusada', !!last(v1, 'err') && !last(v1, 'joined'));
+  send(v2, { t: 'join', code: code2, name: 'Same', ver: 'aaa' }); await wait(80);
+  check('mesma versão entra normalmente', !!last(v2, 'joined'));
   console.log(fails ? `${fails} falha(s)` : 'todos os testes passaram');
   srv.kill(); process.exit(fails ? 1 : 0);
 })();

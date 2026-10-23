@@ -9,6 +9,7 @@ export const net = {
   locked: false,
   connected: false,
   rtt: 0,
+  version: '',         // versão do jogo carregada (o servidor recusa quem tem versão diferente da sala)
   onMessage: null,     // (fromId, dados) => void
   onRoster: null,      // () => void
   onLeft: null,        // (id) => void           (host: um cliente saiu)
@@ -60,8 +61,8 @@ function ask(msg) {
   return new Promise((resolve, reject) => { waiter = { resolve, reject }; send(msg); setTimeout(() => { if (waiter) { waiter = null; reject(new Error('O servidor não respondeu.')); } }, 6000); });
 }
 
-net.host = async name => { await open(); return ask({ t: 'host', name }); };
-net.join = async (code, name) => { await open(); return ask({ t: 'join', code, name }); };
+net.host = async name => { await open(); return ask({ t: 'host', name, ver: net.version }); };
+net.join = async (code, name) => { await open(); return ask({ t: 'join', code, name, ver: net.version }); };
 net.leave = () => { const s = ws; ws = null; reset(); try { s && s.close(); } catch { /* ok */ } };
 net.lock = locked => { send({ t: 'lock', locked }); };
 net.toHost = d => send({ t: 'to', to: 'host', d });          // cliente → host

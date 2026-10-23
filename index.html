@@ -2,6 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
+<meta name="app-version" content="__VERSION__">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Multipunk</title>
 <style>
@@ -185,6 +186,28 @@
   .pm-list { margin-top: 10px; } .pm-row { display: flex; justify-content: space-between; padding: 8px 4px; border-bottom: 1px solid var(--line); font-size: 15px; }
   .pm-row i { font-style: normal; font-family: var(--mono); font-size: 11px; letter-spacing: 2px; color: var(--dim); }
   .onlinemsg { margin-top: 16px; color: var(--accent); font-family: var(--mono); font-size: 13px; min-height: 18px; }
+
+  /* ───────── Atualização, objetivo concluído e vitória ───────── */
+  #updateModal { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; z-index: 90; background: #000b; }
+  #updateModal.on { display: flex; }
+  .upd-card { width: min(460px, 90vw); padding: 28px 30px; background: var(--panel2); border: 1px solid var(--accent); clip-path: var(--clip); text-align: center; box-shadow: 0 0 60px #f28c1f33; }
+  .upd-card small { letter-spacing: 5px; color: var(--accent); font-family: var(--mono); font-size: 11px; }
+  .upd-card h3 { margin: 8px 0 8px; font-size: 24px; letter-spacing: 3px; text-transform: uppercase; }
+  .upd-card p { color: var(--dim); line-height: 1.5; margin: 0 0 18px; font-size: 14px; }
+  .upd-card .row { display: flex; gap: 10px; justify-content: center; }
+  #objDone { position: absolute; left: 50%; top: 20%; transform: translate(-50%, -20px); width: min(560px, 90vw); text-align: center; opacity: 0; pointer-events: none; z-index: 20; transition: opacity .5s, transform .5s; }
+  #objDone.on { opacity: 1; transform: translate(-50%, 0); }
+  .od-card { padding: 20px 26px 22px; background: #0b1016ee; border: 2px solid var(--ok); clip-path: var(--clip); box-shadow: 0 0 50px #4cd68a44; }
+  .od-card small { letter-spacing: 6px; color: var(--ok); font-family: var(--mono); font-size: 12px; }
+  .od-card h2 { margin: 6px 0 6px; font-size: 32px; letter-spacing: 4px; text-transform: uppercase; color: #fff; text-shadow: 0 0 22px #4cd68a88; }
+  .od-card p { margin: 0; color: #b8c4d2; font-size: 15px; line-height: 1.45; }
+  .od-card .od-line { height: 3px; background: linear-gradient(90deg, transparent, var(--ok), transparent); margin: 12px 0 10px; }
+  .res-badge { display: inline-block; margin-bottom: 8px; padding: 4px 26px; font-size: 44px; font-weight: 700; letter-spacing: 14px; text-indent: 14px; }
+  #results.win .res-badge { color: var(--accent); text-shadow: 0 0 30px #f28c1f99; border-top: 3px solid var(--accent); border-bottom: 3px solid var(--accent); animation: pop .7s cubic-bezier(.2, 1.4, .4, 1) both; }
+  #results.lose .res-badge { color: var(--hot); text-shadow: 0 0 30px #ff3b2e88; border-top: 3px solid var(--hot); border-bottom: 3px solid var(--hot); }
+  #results.win .res-card { border-color: var(--accent); box-shadow: 0 0 80px #f28c1f33; }
+  #results.lose .res-card { border-color: var(--hot); }
+  @keyframes pop { from { opacity: 0; transform: scale(1.6); } to { opacity: 1; transform: none; } }
   @media (max-width: 1100px) {
     .topbar { padding: 12px 16px; gap: 12px; } .logo { font-size: 20px; letter-spacing: 4px; } .logo small { display: none; }
     .tab { padding: 10px 9px; letter-spacing: 1px; font-size: 12px; } #tabs { margin-left: 4px; }
@@ -215,6 +238,7 @@
     <div id="kills">Abates: 0</div>
   </div>
 </div>
+<div id="objDone"><div class="od-card"><small id="odKick">OBJETIVO CONCLUÍDO</small><h2 id="odTitle"></h2><div class="od-line"></div><p id="odText"></p></div></div>
 <div id="fade"></div>
 <div id="clickGo"><div>Clique para entrar na operação<small>O mouse fica preso à tela. ESC abre o menu (o jogo continua para os outros).</small></div></div>
 
@@ -240,6 +264,7 @@
 </div>
 
 <div id="results"><div class="res-card">
+  <div class="res-badge" id="resBadge">VITÓRIA</div><br>
   <small id="resKicker">RELATÓRIO DA OPERAÇÃO</small>
   <h2 id="resTitle">Operação concluída</h2>
   <div id="resRows"></div>
@@ -248,6 +273,11 @@
   <button class="btn primary" id="resBtn">Voltar ao menu</button>
 </div></div>
 
+<div id="updateModal"><div class="upd-card">
+  <small>NOVA VERSÃO</small><h3>Atualização disponível</h3>
+  <p id="updText">Saiu uma versão nova do Multipunk. Atualize a página para jogar com as novidades.</p>
+  <div class="row"><button class="btn primary" id="updNow">Atualizar agora</button><button class="btn ghost" id="updLater">Depois</button></div>
+</div></div>
 <canvas id="cursorCanvas"></canvas>
 <script type="importmap">{ "imports": { "three": "./lib/three.module.js" } }</script>
 <script src="./cursor.js"></script>
