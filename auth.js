@@ -11,6 +11,7 @@ const SESSION_DAYS = Number(process.env.SESSION_DAYS) || 7;
 const MAX_FAILS = 5, LOCK_MS = 15 * 60 * 1000;
 const COOKIE = 'mp_session';
 const TRUST_PROXY = process.env.TRUST_PROXY === '1';
+const PROXY_HOPS = Math.max(1, Number(process.env.PROXY_HOPS) || 1);     // quantos proxies seus ficam na frente do app (Coolify/Traefik = 1; Cloudflare + Traefik = 2)
 const DUMMY_HASH = bcrypt.hashSync('dummy-password-for-timing', COST);
 const WEAK = new Set(['12345678', '123456789', '1234567890', 'password', 'senha123', 'senha1234', 'qwertyui', 'qwerty123', '11111111', 'abcd1234', 'iloveyou', 'multipunk', 'password1', 'brasil123']);
 
@@ -29,7 +30,7 @@ const limiter = new RateLimiter();
 function clientIp(req) {
   if (TRUST_PROXY) {                                  // atrás do nginx/Caddy: o último valor é o que o NOSSO proxy acrescentou
     const xf = String(req.headers['x-forwarded-for'] || '').split(',').map(s => s.trim()).filter(Boolean);
-    if (xf.length) return xf[xf.length - 1];
+    if (xf.length) return xf[Math.max(0, xf.length - PROXY_HOPS)];
   }
   return req.socket.remoteAddress || '0.0.0.0';
 }

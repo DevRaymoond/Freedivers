@@ -77,6 +77,7 @@ const last = (ws, t) => [...ws.inbox].reverse().find(m => m.t === t);
   ws.inbox.length = 0; await wait(3100);
   ws.send(JSON.stringify({ t: 'campStart', key: target, level: 3 })); await wait(200);
   check('setor atacável é aceito', !!last(ws, 'campOk'), JSON.stringify(ws.inbox));
+  check('o servidor escolhe a missão do setor (sorteada a cada 15 min)', !!last(ws, 'campOk') && ['operation', 'purge', 'samples', 'beacon', 'defend', 'extract', 'queen'].includes(last(ws, 'campOk').mission));
   ws.send(JSON.stringify({ t: 'campEnd', win: true })); await wait(200);
   check('vitória rápida demais é descartada', last(ws, 'campDone') && last(ws, 'campDone').ok === false);
   ws.inbox.length = 0; await wait(3100);

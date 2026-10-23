@@ -34,6 +34,11 @@ local, sem contas, com a campanha salva no navegador (como no `Jogar.bat`).
   checagem de Origin em todo POST e no WebSocket · uma conexão por conta · cabeçalhos de segurança (CSP, nosniff, frame-ancestors none, HSTS atrás de HTTPS) · SQL sempre parametrizado.
 - **Antifraude:** o servidor só aceita atacar quadrados atacáveis e níveis permitidos, reserva a batalha ao começar e descarta vitórias mais rápidas que `MIN_WIN_SECONDS` (60 s).
   O combate em si é decidido pelo host da sala, então um host malicioso ainda poderia mentir: é o limite de um jogo cooperativo sem servidor de simulação.
+- **Missões que giram:** cada quadrado é uma das 7 missões, sorteada de novo a cada 15 minutos (igual para todos, decidida pelo servidor). Ao clicar no quadrado você escolhe o nível de ameaça.
+  A campanha não exige ter liberado a fase: a trava de progresso vale na Partida livre.
+- **Fronteiras:** quadrados onde insetos e robôs têm 10% ou mais cada são mapas com as duas facções, que entram por lados opostos, lutam entre si (não dão abate nem XP) e só então miram nos jogadores.
+  O nível mínimo ali é o maior entre os dois lados.
+- **Atrás de proxy (Coolify/Nixpacks/Traefik, nginx, Caddy):** `TRUST_PROXY=1` e `HOST=0.0.0.0` dentro do container; `PROXY_HOPS=2` se houver Cloudflare na frente do proxy.
 - **Dificuldade por jogadores:** vida, quantidade e dano dos inimigos crescem com o número de jogadores da sessão (invisível no jogo).
 - Testes: `npm test` (salas e contas/limites/mundo, usando banco em memória, sem tocar no Neon).
 

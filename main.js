@@ -40,6 +40,9 @@ const BOT_TYPES = {
 };
 let curFaction = 'bugs';                       // 'bugs' (insetos) | 'bots' (robôs); no online o host decide
 const ET = () => curFaction === 'bots' ? BOT_TYPES : ENEMY_TYPES;
+// Mapa de fronteira: insetos e robôs juntos. mixFac = pesos { bugs, bots }; eles entram por lados opostos, brigam entre si e só depois miram nos jogadores.
+let mixFac = null, mixAngle = 0;
+const pickFac = () => !mixFac ? curFaction : (Math.random() * (mixFac.bugs + mixFac.bots) < mixFac.bugs ? 'bugs' : 'bots');
 const FT = s => curFaction !== 'bots' ? s : String(s)
   .replace(/Rainha da colmeia/g, 'Comandante Mecha').replace(/A Rainha/g, 'O Comandante').replace(/a Rainha/g, 'o Comandante').replace(/Rainha/g, 'Comandante')
   .replace(/ela invoca/g, 'ele convoca').replace(/Chefe da colmeia/g, 'Chefe da fortaleza').replace(/enxame/g, 'exército').replace(/colmeia/g, 'fortaleza');
@@ -479,7 +482,6 @@ function makeBotMesh(type) {
   return g;
 }
 function animateBots(dt) {
-  if (curFaction !== 'bots') return;
   for (const e of enemies) {
     const bot = e.mesh.userData.bot; if (!bot) continue;
     const p = e.mesh.position;
@@ -487,12 +489,14 @@ function animateBots(dt) {
     let speed = 0;
     if (bot.prev) speed = Math.hypot(p.x - bot.prev.x, p.z - bot.prev.z) / Math.max(dt, 1e-3); else bot.prev = new THREE.Vector3();
     bot.prev.copy(p);
-    const near = nearestLive(p), d = near ? Math.hypot(near.pos.x - p.x, near.pos.z - p.z) : 99;
+    const near = nearestLive(p), foe = foeOf(e, 42);
+    let d = near ? Math.hypot(near.pos.x - p.x, near.pos.z - p.z) : 99;
+    if (foe) d = Math.min(d, Math.hypot(foe.mesh.position.x - p.x, foe.mesh.position.z - p.z));
     animateBot(bot, { dt, speed: Math.min(speed, 9), engaged: e.t.reach > 0 && d < e.t.reach, aim: e.t.kind === 'gun' && d < 42 ? 1 : 0, charge: e.st === 'charge' });
   }
 }
-function makeEnemyMesh(type) {
-  if (curFaction === 'bots' && botsReady()) return makeBotMesh(type);
+function makeEnemyMesh(type, fac = curFaction) {
+  if (fac === 'bots' && botsReady()) return makeBotMesh(type);
   const t = ENEMY_TYPES[type];
   const g = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({ color: t.color, roughness: 0.7, flatShading: true });
@@ -559,12 +563,13 @@ function makeEnemyMesh(type) {
 }
 
 function spawnEnemy(type, atPos, opts = {}) {
-  const t = ET()[type];
-  const mesh = makeEnemyMesh(type);
+  const fac = opts.fac || pickFac();
+  const t = (fac === 'bots' ? BOT_TYPES : ENEMY_TYPES)[type];
+  const mesh = makeEnemyMesh(type, fac);
   let p = atPos;
   if (!p) {
     const lp = livePlayers(), base = lp.length ? pick(lp).pos : player.pos;
-    const a = Math.random() * Math.PI * 2;
+    const a = mixFac ? mixAngle + (fac === 'bots' ? 0 : Math.PI) + rand(-0.9, 0.9) : Math.random() * Math.PI * 2;
     const d = rand(45, 70);
     p = new THREE.Vector3(base.x + Math.cos(a) * d, 0, base.z + Math.sin(a) * d);
     const len = Math.hypot(p.x, p.z);
@@ -579,7 +584,7 @@ function spawnEnemy(type, atPos, opts = {}) {
   }
   scene.add(mesh);
   const e = {
-    id: uid(), by: -1, dm: (opts.dmMul || 1) * party.dmg, type, t, mesh, hp, maxHp: hp, atkCd: rand(0, 0.5), shootCd: rand(1, 2.5), phase: Math.random() * 6,
+    id: uid(), by: -1, dm: (opts.dmMul || 1) * party.dmg, type, fac, t, mesh, hp, maxHp: hp, atkCd: rand(0, 0.5), shootCd: rand(1, 2.5), phase: Math.random() * 6,
     st: 'walk', stT: rand(1.5, 3), volleyCd: 3, summonCd: 10, spd: mods.speed, elite, bias: Math.random() < 0.5 ? 1 : -1,
     pl: opts.pl || null, wave: opts.wave || 0, alert: !!opts.alert, slot: opts.slot || 0,
   };
@@ -714,18 +719,16 @@ function maybeDrop(pos) {
   net.all({ k: 'drop', id, type, x: pos.x, z: pos.z });
 }
 
-const deathColor = e => curFaction === 'bots' ? (e.type === 'spitter' ? 0xffb03a : 0xc0c6ce) : (e.type === 'spitter' ? 0xa4ff6a : 0xc23b2a);
+const deathColor = e => e.fac === 'bots' ? (e.type === 'spitter' ? 0xffb03a : 0xc0c6ce) : (e.type === 'spitter' ? 0xa4ff6a : 0xc23b2a);
 function killEnemy(e) {
   if (!enemies.includes(e)) return;
   burst(e.mesh.position.clone().setY(e.t.height), deathColor(e), e.type === 'brute' || e.type === 'queen' ? 40 : 14, 6);
   scene.remove(e.mesh);
   enemies.splice(enemies.indexOf(e), 1);
-  kills++;
-  killsBy[e.by] = (killsBy[e.by] || 0) + 1;
-  $('kills').textContent = 'Abates: ' + kills;
+  if (e.by !== -2) { kills++; killsBy[e.by] = (killsBy[e.by] || 0) + 1; $('kills').textContent = 'Abates: ' + kills; }
   if (e.type === 'bomber') explode(e.mesh.position, 5.5, 35 * e.dm * mods.edmg, 70);
   else maybeDrop(e.mesh.position);
-  addXp((XP_VALUES[e.type] || 5) * (e.elite ? 2 : 1));
+  if (e.by !== -2) addXp((XP_VALUES[e.type] || 5) * (e.elite ? 2 : 1));
   mission.onKill?.(e);
 }
 
@@ -767,9 +770,10 @@ function formationOffset(i, heading) {
   return new THREE.Vector3(x * c + z * sn, 0, -x * sn + z * c);
 }
 function makePlatoon(center, types, opts = {}) {
-  const pl = { members: [], anchor: center.clone().setY(0), wps: opts.wps || [], wi: 0, state: opts.alert ? 'alert' : 'patrol', speed: 2.3, heading: rand(0, Math.PI * 2), msgT: 0 };
+  const fac = opts.fac || pickFac();
+  const pl = { fac, members: [], anchor: center.clone().setY(0), wps: opts.wps || [], wi: 0, state: opts.alert ? 'alert' : 'patrol', speed: 2.3, heading: rand(0, Math.PI * 2), msgT: 0 };
   types.forEach((t, i) => {
-    const e = spawnEnemy(t, pl.anchor.clone().add(formationOffset(i, pl.heading)), { pl, wave: opts.wave, alert: !!opts.alert, slot: i, hpMul: opts.hpMul, dmMul: opts.dmMul });
+    const e = spawnEnemy(t, pl.anchor.clone().add(formationOffset(i, pl.heading)), { pl, fac, wave: opts.wave, alert: !!opts.alert, slot: i, hpMul: opts.hpMul, dmMul: opts.dmMul });
     pl.members.push(e);
   });
   platoons.push(pl);
@@ -799,6 +803,7 @@ function updatePlatoons(dt) {
       if (d < 2) pl.wi = (pl.wi + 1) % pl.wps.length;
       else { pl.anchor.x += dx / d * pl.speed * dt; pl.anchor.z += dz / d * pl.speed * dt; pl.heading = Math.atan2(dx, dz); }
     }
+    if (mixFac && pl.members.some(e => foeOf(e, 32))) { alertPlatoon(pl); continue; }
     for (const p of live) {                                  // qualquer jogador pode chamar a atenção do pelotão
       const reach = PL_DETECT * (p.sprinting ? 1.35 : p.walk ? 0.65 : 1);
       if (pl.members.some(e => e.mesh.position.distanceTo(p.pos) < reach)) { alertPlatoon(pl); break; }
@@ -1450,6 +1455,9 @@ function startMission(id, levelArg, opts = {}) {
   const L = Math.min(LEVEL_MAX, Math.max(1, Math.round(levelArg || missionLevel(id))));
   relax = L === 1;                                       // modo relax só no nível 1
   curFaction = opts.faction || selFaction; campaignCell = opts.cell || null;
+  clientMixed = false;
+  mixFac = opts.mix ? { bugs: opts.mix.i, bots: opts.mix.r } : null; mixAngle = Math.random() * Math.PI * 2;
+  if (mixFac) loadBots().catch(() => {});
   const np = Math.max(1, net.role === 'host' ? net.roster.length : 1); campParty = np;
   party = { hp: 1 + 0.45 * (np - 1), count: 1 + 0.5 * (np - 1), dmg: 1 + 0.08 * (np - 1) };
   clearWorld();
@@ -1562,6 +1570,7 @@ const worldReady = () => !!WORLD.idx && WORLD.sec.size > 0;
 const dominantOf = o => WL.dominant(WORLD.sec.get(ckey(o)));
 const attackable = o => WL.attackable(WORLD.idx, WORLD.sec, ckey(o));
 const campMinLevel = f => WL.minLevel(WORLD.sec, WORLD.init, f, LEVEL_MAX);
+const sectorMin = o => WL.minLevelSector(WORLD.sec, WORLD.init, WORLD.sec.get(ckey(o)), LEVEL_MAX);
 const enemyOfCell = o => WL.enemyOf(WORLD.sec.get(ckey(o)));
 async function loadWorld() {
   if (!WORLD.idx) {
@@ -1589,6 +1598,7 @@ function applyServerWorld(d, full) {                              // mundo compa
   if (full) WORLD.sec = WL.unpackSectors(d.sectors);
   else for (const [k, v] of Object.entries(d.sectors || {})) WORLD.sec.set(k, { h: v[0], i: v[1], r: v[2] });
   Object.assign(WORLD, { init: d.init || WORLD.init, season: d.season, turn: d.turn, log: d.log || [] });
+  if (d.now) WORLD.timeOffset = d.now - Date.now();
   if ($('pane-camp') && $('pane-camp').classList.contains('on')) renderCampaign(); else drawCampaign();
 }
 // local: resultado da operação + um passo da guerra
@@ -1604,10 +1614,9 @@ function campaignResult(k, win, level, party) {
   WORLD.log.length = Math.min(WORLD.log.length, 14);
   saveLocalCampaign();
 }
-function cellMission(o) {
-  const pool = MISSIONS.filter((_, i) => missionUnlocked(i));
-  return pool[WL.hash2(o.c + 7, o.r + 3) % pool.length];
-}
+const worldNow = () => Date.now() + (WORLD.timeOffset || 0);
+function cellMission(o) { return MISSIONS.find(m => m.id === WL.missionOf(o.c, o.r, WORLD.season, worldNow())) || MISSIONS[0]; }
+const fmtMin = ms => { const t = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
 let campSel = null, campPending = null, campParty = 1;
 function drawCampaign() {
   const cv = $('campCv'); if (!cv || !worldReady()) return;
@@ -1664,9 +1673,10 @@ function renderCampCell() {
     ${pb('Humanos', s.h, OWN.H.color)}${pb('Insetos', s.i, OWN.I.color)}${pb('Robôs', s.r, OWN.R.color)}`;
   if (WL.isHuman(s)) { box.innerHTML = `${head}<p style="color:var(--dim)">Território dos jogadores (${s.h}%). Os inimigos podem tentar retomá-lo.</p>`; return; }
   if (!attackable(o)) { box.innerHTML = `${head}<p style="color:var(--dim)">Fora de alcance. Domine um setor vizinho antes.</p>`; return; }
-  const ef = enemyOfCell(o), fac = OWN[ef].fac, m = cellMission(o), min = campMinLevel(ef), L = Math.min(LEVEL_MAX, Math.max(min, save.campLevel || min));
+  const ef = enemyOfCell(o), fac = OWN[ef].fac, m = cellMission(o), min = sectorMin(o), L = Math.min(LEVEL_MAX, Math.max(min, save.campLevel || min)), mix = WL.mixOf(s);
   const offline = WORLD.remote && !net.connected;
-  box.innerHTML = `${head}<p>Defensor: <b style="color:${OWN[ef].color}">${OWN[ef].name}</b> · Operação: <b>${FT2(m.title, fac)}</b><br><small style="color:var(--dim)">${FT2(m.desc, fac)}</small></p>
+  box.innerHTML = `${head}${mix ? '<div class="frontier">⚔ FRONTEIRA: insetos e robôs estão neste mapa e lutam entre si antes de atacar você</div>' : ''}
+    <p>${mix ? 'Facções' : 'Defensor'}: <b style="color:${OWN[ef].color}">${mix ? 'Insetos × Robôs' : OWN[ef].name}</b> · Operação: <b>${FT2(m.title, fac)}</b> <small style="color:var(--dim)" id="campRot">· muda em ${fmtMin(WL.nextRotation(worldNow()) - worldNow())}</small><br><small style="color:var(--dim)">${FT2(m.desc, fac)}</small></p>
     <div class="lvl"><div class="lvl-head"><small>NÍVEL DE AMEAÇA (mínimo ${min})</small><b id="cLv">${L}</b><i>${levelTag(L)}</i></div>
       <div class="lvl-ctl"><button class="btn" id="cDn" ${canPick ? '' : 'disabled'}>−</button><input type="range" id="cRange" min="${min}" max="${LEVEL_MAX}" value="${L}" ${canPick ? '' : 'disabled'}><button class="btn" id="cUp" ${canPick ? '' : 'disabled'}>+</button></div></div>
     <button class="btn primary" id="cGo" ${canPick && !missionBusy() && !offline ? '' : 'disabled'}>${!canPick ? 'Aguardando o host' : offline ? 'Reconectando…' : 'Atacar este setor'}</button>
@@ -1676,7 +1686,7 @@ function renderCampCell() {
   $('cGo').onclick = async () => {
     if (fac === 'bots' && !botsReady()) { $('cGo').disabled = true; $('cGo').textContent = 'Carregando robôs…'; try { await loadBots(); } catch { /* usa o modelo simples */ } }
     const h = WL.hash2(o.c, o.r), level = +$('cRange').value;
-    const opts = { cell: ckey(o), faction: fac, biome: o.b, R: 80 + (h % 40), rocks: 35 + (h >> 4) % 45 };
+    const opts = { cell: ckey(o), faction: fac, biome: o.b, R: 80 + (h % 40), rocks: 35 + (h >> 4) % 45, mix };
     if (!WORLD.remote) return startMission(m.id, level, opts);
     $('cGo').disabled = true; campPending = { m, level, opts }; net.campStart(opts.cell, level);       // o servidor confirma antes de começar
     setTimeout(() => { if (campPending) { campPending = null; renderCampCell(); } }, 8000);
@@ -1684,9 +1694,20 @@ function renderCampCell() {
 }
 net.onCamp = msg => {
   if (msg.t === 'campErr') { campPending = null; renderCampCell(); const el = $('campMsg'); if (el) el.textContent = msg.msg; return; }
-  if (msg.t === 'campOk' && campPending) { const p = campPending; campPending = null; p.opts.faction = msg.faction === 'I' ? 'bugs' : 'bots'; startMission(p.m.id, msg.level, p.opts); }
+  if (msg.t === 'campOk' && campPending) {
+    const p = campPending; campPending = null; p.opts.faction = msg.faction === 'I' ? 'bugs' : 'bots'; p.opts.mix = msg.mix || null;
+    startMission(msg.mission || p.m.id, msg.level, p.opts);                       // quem manda na missão é o servidor
+  }
 };
 net.onWorld = applyServerWorld;
+let rotEpoch = -1;
+setInterval(() => {                                      // contagem para a próxima troca de missão; ao virar o ciclo, redesenha o painel
+  if (!worldReady()) return;
+  const ep = WL.epochOf(worldNow());
+  if (rotEpoch !== -1 && ep !== rotEpoch && $('pane-camp') && $('pane-camp').classList.contains('on') && !campPending) renderCampCell();
+  rotEpoch = ep;
+  const el = $('campRot'); if (el) el.textContent = `· muda em ${fmtMin(WL.nextRotation(worldNow()) - worldNow())}`;
+}, 1000);
 function FT2(str, fac) { const keep = curFaction; curFaction = fac; const r = FT(str); curFaction = keep; return r; }
 
 // ───────────── login ─────────────
@@ -2495,7 +2516,16 @@ function updateCamera() {
   if (window.__debugCam) { camera.position.fromArray(window.__debugCam.pos); camera.lookAt(...window.__debugCam.look); }  // só para testes
 }
 
+let clientMixed = false;
+function foeOf(e, range = 75) {                                         // inimigo mais próximo da outra facção (só em mapa de fronteira)
+  if (!mixFac && !clientMixed) return null;
+  let b = null, bd = range;
+  for (const o of enemies) { if (o.fac === e.fac) continue; const d = Math.hypot(o.mesh.position.x - e.mesh.position.x, o.mesh.position.z - e.mesh.position.z); if (d < bd) { bd = d; b = o; } }
+  return b;
+}
 function enemyTarget(e) {
+  const foe = foeOf(e);
+  if (foe) return { pos: foe.mesh.position, gen: false, rad: foe.t.radius * 0.7, pid: -1, en: foe };
   const near = nearestLive(e.mesh.position);
   const pos = near ? near.pos : player.pos;
   if (generator && generator.active && generator.hp > 0 && e.type !== 'spitter' && e.type !== 'queen') {
@@ -2506,12 +2536,12 @@ function enemyTarget(e) {
   return { pos, gen: false, rad: 0, pid: near ? near.id : -1 };
 }
 
-function spitAt(from, dir, speed, dmg, big) {
-  const bt = curFaction === 'bots';
+function spitAt(from, dir, speed, dmg, big, fac = curFaction) {
+  const bt = fac === 'bots';
   const pm = new THREE.Mesh(new THREE.SphereGeometry(big ? (bt ? 0.3 : 0.45) : (bt ? 0.14 : 0.28), 8, 6), new THREE.MeshBasicMaterial({ color: bt ? (big ? 0xff3030 : 0xffb03a) : (big ? 0xff40c0 : 0xa4ff6a) }));
   pm.position.copy(from);
   scene.add(pm);
-  projectiles.push({ id: uid(), m: pm, v: dir.clone().normalize().multiplyScalar(speed), life: 4, dmg: dmg * mods.edmg, big });
+  projectiles.push({ id: uid(), m: pm, v: dir.clone().normalize().multiplyScalar(speed), life: 4, dmg: dmg * mods.edmg, big, fac });
 }
 function patrolMove(e, dt) {
   const m = e.mesh, pl = e.pl;
@@ -2534,7 +2564,7 @@ function updateEnemies(dt) {
     const to = tg.pos.clone().sub(m.position).setY(0);
     const dist = Math.max(0, to.length() - tg.rad);
     const dir = to.normalize();
-    const hurt = d => tg.gen ? damageGenerator(d * mods.edmg * e.dm) : (tg.pid >= 0 ? hurtPlayer(tg.pid, d * mods.edmg * e.dm) : 0);
+    const hurt = d => tg.en ? damageEnemy(tg.en, d * mods.edmg * e.dm, -2) : tg.gen ? damageGenerator(d * mods.edmg * e.dm) : (tg.pid >= 0 ? hurtPlayer(tg.pid, d * mods.edmg * e.dm) : 0);
     const walkTo = sp => {                                   // anda para o alvo (ou se afasta se sp < 0), contornando pedras
       const d0 = sp >= 0 ? dir : dir.clone().negate();
       m.position.addScaledVector(steerRocks(m.position, d0, e.t.radius * 0.6, e, sp >= 0 ? tg : null), Math.abs(sp) * dt * e.spd);
@@ -2551,7 +2581,7 @@ function updateEnemies(dt) {
       if (e.shootCd <= 0 && dist < 38) {
         e.shootCd = rand(1.8, 3);
         const from = m.position.clone().setY(curFaction === 'bots' ? 1.15 : 1.5);
-        spitAt(from, tg.pos.clone().add(new THREE.Vector3(0, 1.1, 0)).sub(from), 18, e.t.dmg * e.dm, false);
+        spitAt(from, tg.pos.clone().add(new THREE.Vector3(0, 1.1, 0)).sub(from), 18, e.t.dmg * e.dm, false, e.fac);
         beep(240, 0.12, 0.05);
       }
     } else if (e.type === 'bomber') {
@@ -2588,7 +2618,7 @@ function updateEnemies(dt) {
         for (let i = -2; i <= 2; i++) {
           const v = base.clone(); const c = Math.cos(i * 0.16), sn = Math.sin(i * 0.16);
           const x = v.x * c - v.z * sn, z = v.x * sn + v.z * c; v.x = x; v.z = z;
-          spitAt(from, v, 15, 14 * e.dm, true);
+          spitAt(from, v, 15, 14 * e.dm, true, e.fac);
         }
         beep(180, 0.25, 0.08);
       }
@@ -2621,6 +2651,9 @@ function updateProjectiles(dt) {
     p.life -= dt;
     for (const q of live) {
       if (p.m.position.distanceTo(q.pos.clone().setY(1.1)) < (p.big ? 1.2 : 0.9)) { hurtPlayer(q.id, p.dmg); p.life = 0; break; }
+    }
+    if (mixFac && p.life > 0) for (const o of enemies) {                      // tiro da facção inimiga acerta quem é da outra
+      if (o.fac !== p.fac && p.m.position.distanceTo(o.mesh.position.clone().setY(o.t.height)) < o.t.radius) { damageEnemy(o, p.dmg, -2); p.life = 0; break; }
     }
     if (p.life <= 0 || p.m.position.y < 0) {
       scene.remove(p.m);
@@ -2823,8 +2856,8 @@ function buildSnapshot() {
   const pl = [Object.assign({ id: net.id, al: localAlive() || state === 'cinematic' ? 1 : 0 }, myState())];
   for (const o of Object.values(others)) if (o.last) pl.push(Object.assign({ id: o.id, al: o.status === 'alive' ? 1 : 0 }, o.last));
   const en = enemies.map(e => [e.id, TYPE_LIST.indexOf(e.type), r1(e.mesh.position.x), r1(e.mesh.position.z), r2(e.mesh.rotation.y),
-    Math.max(0, Math.round(e.hp / e.maxHp * 100)), (e.elite ? 1 : 0) | ((ST_CODE[e.st] || 0) << 1)]);
-  const pr = projectiles.map(p => [p.id, r1(p.m.position.x), r1(p.m.position.y), r1(p.m.position.z), p.big ? 1 : 0]);
+    Math.max(0, Math.round(e.hp / e.maxHp * 100)), (e.elite ? 1 : 0) | ((ST_CODE[e.st] || 0) << 1), e.fac === 'bots' ? 1 : 0]);
+  const pr = projectiles.map(p => [p.id, r1(p.m.position.x), r1(p.m.position.y), r1(p.m.position.z), (p.big ? 1 : 0) | (p.fac === 'bots' ? 2 : 0)]);
   const hud = {
     ti: mission.title, tx: mission.text, pg: r2(mission.progress), xp: Math.round(xp), xn: xpNeed, lv: level, ll: mission.livesLeft || 0,
     kl: kills, el: Math.round(elapsed), wp: waypoint ? [r1(waypoint.x), r1(waypoint.z), waypointHide] : null,
@@ -2849,12 +2882,14 @@ function netHost(dt) {
 }
 
 function createEnemyProxy(a) {
-  const type = TYPE_LIST[a[1]], t = ET()[type], mesh = makeEnemyMesh(type);
+  const fac = a[7] === 1 ? 'bots' : 'bugs';
+  if (fac !== curFaction) clientMixed = true;
+  const type = TYPE_LIST[a[1]], t = (fac === 'bots' ? BOT_TYPES : ENEMY_TYPES)[type], mesh = makeEnemyMesh(type, fac);
   const elite = !!(a[6] & 1);
   if (elite) { mesh.scale.multiplyScalar(1.25); mesh.traverse(o => { if (o.isMesh && o.material.emissive) o.material.emissive.set(0x7a3a00); }); }
   mesh.position.set(a[2], 0, a[3]); mesh.rotation.y = a[4];
   scene.add(mesh);
-  const e = { id: a[0], type, t, mesh, hp: t.hp, maxHp: t.hp, tx: a[2], tz: a[3], tr: a[4], st: 'walk', elite, phase: Math.random() * 6, last: new THREE.Vector3(a[2], 0, a[3]) };
+  const e = { id: a[0], type, fac, t, mesh, hp: t.hp, maxHp: t.hp, tx: a[2], tz: a[3], tr: a[4], st: 'walk', elite, phase: Math.random() * 6, last: new THREE.Vector3(a[2], 0, a[3]) };
   enemies.push(e); enemyById.set(e.id, e);
   return e;
 }
@@ -2882,7 +2917,8 @@ function applySnapshot(d) {
     seenP.add(a[0]);
     let p = projById.get(a[0]);
     if (!p) {
-      const m = new THREE.Mesh(new THREE.SphereGeometry(a[4] ? 0.45 : 0.28, 8, 6), new THREE.MeshBasicMaterial({ color: a[4] ? 0xff40c0 : 0xa4ff6a }));
+      const big = a[4] & 1, bt = !!(a[4] & 2);
+      const m = new THREE.Mesh(new THREE.SphereGeometry(big ? (bt ? 0.3 : 0.45) : (bt ? 0.14 : 0.28), 8, 6), new THREE.MeshBasicMaterial({ color: bt ? (big ? 0xff3030 : 0xffb03a) : (big ? 0xff40c0 : 0xa4ff6a) }));
       m.position.set(a[1], a[2], a[3]); scene.add(m); p = { id: a[0], m, tp: new THREE.Vector3() }; projById.set(a[0], p); projectiles.push(p);
     }
     p.tp.set(a[1], a[2], a[3]);
@@ -3003,8 +3039,9 @@ function clientStartMission(d) {
   ensureAudio();
   if (missionBusy()) { clearWorld(); }
   relax = !!d.relax;
-  campaignCell = d.cell || null;
+  campaignCell = d.cell || null; mixFac = null; clientMixed = false;
   curFaction = d.faction === 'bots' ? 'bots' : 'bugs';
+  loadBots().catch(() => {});
   if (curFaction === 'bots') loadBots().catch(() => {});
   clearWorld();
   applyBiome(d.biome);

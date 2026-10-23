@@ -210,7 +210,7 @@ wss.on('connection', ws => {
       meta.lastCamp = now; meta.battle = null;
       const members = meta.room ? roomUserIds(meta.room) : [user.id];
       world.startBattle({ userId: user.id }, { key: String(m.key || '').slice(0, 8), level: m.level, party: members.length, members })
-        .then(b => { if (b.error) return send(ws, { t: 'campErr', msg: b.error }); meta.battle = b; send(ws, { t: 'campOk', id: b.id, faction: b.faction, level: b.level, party: b.party }); })
+        .then(b => { if (b.error) return send(ws, { t: 'campErr', msg: b.error }); meta.battle = b; send(ws, { t: 'campOk', id: b.id, faction: b.faction, level: b.level, party: b.party, mission: b.mission, mix: b.mix }); })
         .catch(e => { console.error('[camp]', e.message); send(ws, { t: 'campErr', msg: 'Erro no servidor. Tente de novo.' }); });
     } else if (m.t === 'campEnd' && world && user && meta.battle) {
       const b = meta.battle; meta.battle = null;

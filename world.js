@@ -34,12 +34,12 @@ async function createWorld(store, onChange) {
   }
   await load();
 
-  const snapshot = () => ({ season, turn, init, sectors: W.packSectors(sec), log: log.slice(0, 14), won: false });
+  const snapshot = () => ({ season, turn, init, sectors: W.packSectors(sec), log: log.slice(0, 14), won: false, now: Date.now() });
   async function commit(changedKeys, events) {
     for (const m of events) log.unshift({ t: season, m });
     log.length = Math.min(log.length, 14);
     await store.saveWorld(metaNow(), changedKeys.map(rowOf), events, season, false);
-    onChange({ season, turn, init, sectors: W.packSectors(sec, changedKeys), log: log.slice(0, 14) });
+    onChange({ season, turn, init, sectors: W.packSectors(sec, changedKeys), log: log.slice(0, 14), now: Date.now() });
   }
 
   // ───────────── batalhas ─────────────
@@ -49,11 +49,11 @@ async function createWorld(store, onChange) {
       if (!s || !W.attackable(idx, sec, k)) return { error: 'Esse setor não pode ser atacado agora.' };
       level = Math.round(Number(level));
       if (!(level >= 1 && level <= 20)) return { error: 'Nível inválido.' };
-      const fac = W.enemyOf(s), min = W.minLevel(sec, init, fac);
-      if (level < min) return { error: `Contra ${W.FACTION_NAME[fac]} só valem níveis ${min}+ agora.` };
+      const fac = W.enemyOf(s), min = W.minLevelSector(sec, init, s);
+      if (level < min) return { error: `Neste setor só valem níveis ${min}+ agora.` };
       const [c, r] = k.split(',').map(Number);
       const id = await store.createBattle({ season, hostId: user.userId, gx: c, gy: r, faction: fac, level, party, started: Date.now() });
-      return { id, key: k, level, faction: fac, party, members, startedAt: Date.now(), season };
+      return { id, key: k, level, faction: fac, party, members, startedAt: Date.now(), season, mission: W.missionOf(c, r, season, Date.now()), mix: W.mixOf(s), min };
     });
   }
   async function endBattle(b, win) {

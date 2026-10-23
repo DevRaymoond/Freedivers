@@ -51,6 +51,17 @@ export function attackable(idx, sec, k) {
 export function lostFraction(sec, init, f) { const t = totals(sec), now = f === 'I' ? t.i : t.r, base = f === 'I' ? init.i : init.r; return Math.min(1, Math.max(0, 1 - now / Math.max(1, base))); }
 export const minLevel = (sec, init, f, max = 20) => Math.min(max - 1, 1 + Math.floor(lostFraction(sec, init, f === 'I' ? 'I' : 'R') * 16));
 
+// ───────────── missão de cada quadrado: muda sozinha a cada 15 minutos, igual para todos (depende só da hora, da temporada e do quadrado) ─────────────
+export const MISSION_IDS = ['operation', 'purge', 'samples', 'beacon', 'defend', 'extract', 'queen'];
+export const ROTATION_MS = 15 * 60 * 1000;
+export const epochOf = now => Math.floor(now / ROTATION_MS);
+export const nextRotation = now => (epochOf(now) + 1) * ROTATION_MS;
+export const missionOf = (c, r, season, now) => MISSION_IDS[hash2(hash2(c, r) ^ (season * 977), epochOf(now) * 7919 + 13) % MISSION_IDS.length];
+// fronteira: quadrado onde insetos e robôs aparecem juntos (10% ou mais cada); no mapa os dois lutam entre si e contra os jogadores
+export const MIX_MIN = 10;
+export const mixOf = s => (s.i >= MIX_MIN && s.r >= MIX_MIN ? { i: s.i, r: s.r } : null);
+export const minLevelSector = (sec, init, s, max = 20) => { const m = mixOf(s); return m ? Math.max(minLevel(sec, init, 'I', max), minLevel(sec, init, 'R', max)) : minLevel(sec, init, enemyOf(s), max); };
+
 export const battleGain = (level, party) => Math.max(10, Math.min(55, Math.round(12 + 1.6 * level + 3 * (party - 1))));
 const move = (s, from, to, n) => { n = Math.min(n, s[from]); s[from] -= n; s[to] += n; return n; };
 // vitória: os humanos tomam porcentagem do defensor (e, se faltar, do outro lado). Derrota: o defensor recupera um pouco.
