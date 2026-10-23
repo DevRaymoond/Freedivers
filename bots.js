@@ -45,6 +45,7 @@ export const botsReady = () => !!tpl;
 
 // Paleta do atlas (aço escuro, vermelho, faixas brancas): sem UV no arquivo, então a cor vai por região do corpo.
 function paint(sm) {
+  if (sm.geometry.attributes.color) return;                       // modelo já veio pintado (COLOR_0)
   const geo = sm.geometry, pos = geo.attributes.position, si = geo.attributes.skinIndex, sw = geo.attributes.skinWeight, bones = sm.skeleton.bones;
   const col = new Float32Array(pos.count * 3), c = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {

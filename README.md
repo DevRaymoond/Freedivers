@@ -47,6 +47,14 @@ O menu principal tem **Novo jogo · Modo online · Configurações · Controles*
 Online, o host escolhe a facção e os clientes seguem. **Créditos só são concedidos se o objetivo for concluído**; derrota ou abandono não pagam.
 *Configurações*: volume, sensibilidade da mira, qualidade gráfica (alta/média/baixa), tipo de controle (automático/PC/toque) e tela cheia.
 
+## Campanha e progressão
+- **Campanha** (Novo jogo): o continente central do mapa (`assets/worldmap.jpg`, grade 24×24, só a terra firme, sem as ilhas: 337 quadrados em `assets/world.json`)
+  é dividido entre três forças: **jogadores**, **insetos** e **robôs**. Cada quadrado é uma operação, no bioma do quadrado, e o dono dele define o inimigo.
+  Você só ataca quadrados vizinhos ao seu território (contorno amarelo). Ganhar converte o quadrado; depois de cada operação as facções lutam entre si e contra-atacam.
+- **Dificuldade dinâmica:** quanto mais território uma facção perde, mais **níveis baixos de ameaça são desativados** contra ela (0% perdido = nível 1+; ~50% = nível 9+).
+- **Fases em sequência:** a fase seguinte só libera depois de vencer a anterior em nível de ameaça **3 ou mais** (vale na campanha e na Partida livre).
+- O estado da campanha fica em `save.campaign` (JSON simples, salvo no aparelho; não precisa de banco de dados). `tools/build_world.py` gera o mapa a partir da imagem.
+
 ## Operações
 1. **Operação Gerador** (campanha, nível 1 = modo relax): você nasce a ~120 m do objetivo e atravessa o mapa com pelotões patrulhando
    (notam proximidade, tiros e explosões e alertam os vizinhos); defende o gerador por 8 ondas; segura a zona de extração (raio 50 m) por 1:30;

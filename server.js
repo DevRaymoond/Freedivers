@@ -22,7 +22,7 @@ const MAX_PLAYERS = 4;
 // ───────────── arquivos estáticos (lista permitida: nada de node_modules, .git, server.js…) ─────────────
 const types = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css',
-  '.png': 'image/png', '.json': 'application/json', '.glb': 'model/gltf-binary', '.ico': 'image/x-icon', '.webp': 'image/webp',
+  '.png': 'image/png', '.json': 'application/json', '.glb': 'model/gltf-binary', '.ico': 'image/x-icon', '.webp': 'image/webp', '.jpg': 'image/jpeg',
 };
 const allowed = p => /^\/(index\.html|main\.js|net\.js|cursor\.js|bots\.js|favicon\.ico)$/.test(p) || /^\/(lib|assets)\/[\w./-]+$/.test(p) || (DEV && /^\/tools\/[\w./-]+$/.test(p));
 const gzCache = new Map();
@@ -40,7 +40,7 @@ function sendFile(req, res, file) {
   });
 }
 // Versão = hash do conteúdo dos arquivos do jogo. Muda sozinha quando você atualiza o código na VPS.
-const APP_FILES = ['index.html', 'main.js', 'net.js', 'cursor.js', 'bots.js', 'assets/character.glb', 'assets/robot.glb'];
+const APP_FILES = ['index.html', 'main.js', 'net.js', 'cursor.js', 'bots.js', 'assets/character.glb', 'assets/robot.glb', 'assets/world.json', 'assets/worldmap.jpg'];
 let verCache = { sig: '', hash: 'dev' };
 function appVersion() {
   let sig = '';
