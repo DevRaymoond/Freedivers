@@ -38,7 +38,7 @@ export function seedSectors(idx) {
 export const isOldLayout = init => !init || (init.i || 0) + (init.r || 0) > 10 * SCALE;
 export function initTotals(sec) { const t = { i: 0, r: 0 }; for (const s of sec.values()) { t.i += s.i; t.r += s.r; } return t; }
 
-export const HUMAN_MIN = 5000;                                  // 50% ou mais = quadrado dos humanos
+export const HUMAN_MIN = 7000;                                  // 70% ou mais = setor dominado (dos humanos, ou de uma facção); 100% = reivindicado
 export const isHuman = s => s.h >= HUMAN_MIN;
 export function dominant(s) { return s.h > s.i && s.h > s.r ? 'H' : (s.i >= s.r ? 'I' : 'R'); }
 export const enemyOf = s => (s.i >= s.r ? 'I' : 'R');           // quem defende o quadrado contra os humanos
@@ -46,10 +46,10 @@ export function humanCount(sec) { let n = 0; for (const s of sec.values()) if (i
 export function totals(sec) { const t = { h: 0, i: 0, r: 0 }; for (const s of sec.values()) { t.h += s.h; t.i += s.i; t.r += s.r; } return t; }
 
 // só dá para atacar quadrado que não é dos humanos e que encosta num que é (ou onde a batalha já começou)
-// Estágios de um setor: DISPUTA (humanos abaixo de 50%), DOMINADO (50% ou mais, mas ainda restam inimigos: é preciso erradicá-los com mais missões)
-// e FIXO (100% humano). Setor fixo só perde terreno se um vizinho inimigo o atacar, e resiste (o avanço inimigo cai pela metade).
+// Estágios de um setor: DISPUTA (humanos abaixo de 70%), DOMINADO (70% ou mais, mas ainda restam inimigos: é preciso erradicá-los com mais missões)
+// e FIXO, na tela "reivindicado" (100% humano). Um setor reivindicado só perde terreno se um vizinho dominado por inimigos o atacar.
 export const stageOf = s => (s.h >= SCALE ? 'fixo' : s.h >= HUMAN_MIN ? 'dominado' : 'disputa');
-export const STAGE_NAME = { disputa: 'Em disputa', dominado: 'Dominado', fixo: 'Fixo dos humanos' };
+export const STAGE_NAME = { disputa: 'Em disputa', dominado: 'Dominado', fixo: 'Reivindicado' };
 // atacável = ainda não é 100% humano e (já tem avanço humano ou encosta num setor dos humanos). Setor atrás de território dominado fica fora do alcance dos inimigos.
 export function attackable(idx, sec, k) {
   const s = sec.get(k); if (!s || s.h >= SCALE) return false;
@@ -90,12 +90,12 @@ export const LOSS_RATIO = 0.25;                                          // derr
 export function applyLoss(s, missionId, level) { const d = enemyOf(s) === 'I' ? 'i' : 'r'; return -move(s, 'h', d, Math.round(missionGain(missionId, level) * LOSS_RATIO)); }
 
 // Passo da guerra (a cada minuto): avanço contínuo e fixo. Cada facção empurra, ENEMY_PTS_PER_MIN pontos por minuto, todo setor vizinho de um setor
-// que ela já tem com 50% ou mais (dominado). Setores atrás de território humano ficam fora de alcance. Os jogadores seguram o avanço vencendo missões.
+// que ela já domina (70% ou mais), até o setor chegar a 100% (reivindicado). Setores atrás de território humano ficam fora de alcance. Os jogadores seguram o avanço vencendo missões.
 export function warTick(idx, sec, seed, minHumanSectors = 3, pts = ENEMY_PTS_PER_MIN) {
   const events = [], changed = new Set();
   for (const f of ['I', 'R']) {
     const fl = f.toLowerCase(), targets = new Set();
-    for (const o of idx.cells) { const k = key(o.c, o.r); if (sec.get(k)[fl] >= HUMAN_MIN) for (const n of idx.nbr.get(k)) if (sec.get(n)[fl] < HUMAN_MIN) targets.add(n); }
+    for (const o of idx.cells) { const k = key(o.c, o.r); if (sec.get(k)[fl] >= HUMAN_MIN) for (const n of idx.nbr.get(k)) if (sec.get(n)[fl] < SCALE) targets.add(n); }
     for (const tk of targets) {
       const t = sec.get(tk), tc = idx.byKey.get(tk);
       const def = ['h', 'i', 'r'].filter(x => x !== fl).sort((x, y) => t[y] - t[x])[0];
@@ -106,14 +106,14 @@ export function warTick(idx, sec, seed, minHumanSectors = 3, pts = ENEMY_PTS_PER
       changed.add(tk);
       const name = cellName(tc.c, tc.r);
       if (def === 'h' && stBefore === 'dominado' && stageOf(t) === 'disputa') events.push(`${FACTION_NAME[f]} retomaram o setor ${name}!`);
-      else if (def === 'h' && stBefore === 'fixo') events.push(`${FACTION_NAME[f]} atacam o setor fixo ${name}.`);
+      else if (def === 'h' && stBefore === 'fixo') events.push(`${FACTION_NAME[f]} atacam o setor reivindicado ${name}.`);
       else if (dominant(t) !== before) events.push(`${FACTION_NAME[f]} tomaram o setor ${name} dos ${FACTION_NAME[before].toLowerCase()}.`);
     }
   }
   return { events, changed: [...changed] };
 }
 export const campaignWon = sec => humanCount(sec) === sec.size;
-export const stageEvent = (name, before, after) => (before === after ? null : after === 'fixo' ? `Setor ${name} erradicado: agora é fixo dos humanos!` : after === 'dominado' && before === 'disputa' ? `Setor ${name} dominado! Faltam missões para erradicar os inimigos.` : after === 'disputa' && before !== 'disputa' ? `Setor ${name} voltou a ser disputado.` : null);
+export const stageEvent = (name, before, after) => (before === after ? null : after === 'fixo' ? `Setor ${name} reivindicado pelos humanos!` : after === 'dominado' && before === 'disputa' ? `Setor ${name} dominado! Faltam missões para erradicar os inimigos.` : after === 'disputa' && before !== 'disputa' ? `Setor ${name} voltou a ser disputado.` : null);
 
 // serialização: { "c,r": [h, i, r] }
 export const packSectors = (sec, keys) => { const o = {}; for (const k of keys || sec.keys()) { const s = sec.get(k); o[k] = [s.h, s.i, s.r]; } return o; };

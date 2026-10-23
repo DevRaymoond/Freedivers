@@ -22,9 +22,9 @@ const check = (name, ok, extra) => { console.log(ok ? 'OK   ' : 'FALHA', name, o
   let guard = 0; const seen = [W.stageOf(s)];
   while (W.stageOf(s) !== 'fixo' && guard++ < 200) { W.applyWin(s, 'operation', 20); const st = W.stageOf(s); if (st !== seen[seen.length - 1]) seen.push(st); }
   check('uma sequência de vitórias passa por disputa → dominado → fixo', seen.join('>') === 'disputa>dominado>fixo', seen.join('>'));
-  const mid = { h: 6000, i: 4000, r: 0 };
-  check('setor dominado (60%) ainda é atacável para erradicar os inimigos', W.isHuman(mid) && W.stageOf(mid) === 'dominado');
-  check('mensagens de estágio', /dominado/i.test(W.stageEvent('K16', 'disputa', 'dominado')) && /fixo/i.test(W.stageEvent('K16', 'dominado', 'fixo')) && W.stageEvent('K16', 'fixo', 'fixo') === null);
+  const mid = { h: 7500, i: 2500, r: 0 };
+  check('setor dominado (75%) ainda é atacável para erradicar os inimigos', W.isHuman(mid) && W.stageOf(mid) === 'dominado');
+  check('mensagens de estágio', /dominado/i.test(W.stageEvent('K16', 'disputa', 'dominado')) && /reivindicado/i.test(W.stageEvent('K16', 'dominado', 'fixo')) && W.stageEvent('K16', 'fixo', 'fixo') === null);
 
   // alcance: facção só ataca a partir de setor que domina; setor cercado de território humano fica fora de alcance
   const sec2 = W.seedSectors(idx);
@@ -52,7 +52,7 @@ const check = (name, ok, extra) => { console.log(ok ? 'OK   ' : 'FALHA', name, o
   const day6 = enemyCount();
   check('em ~6 dias, sem os jogadores, o planeta quase todo caiu (o último reduto resiste)', day6 >= sec3.size - 8, 'setores inimigos: ' + day6 + ' de ' + sec3.size);
   check('o ganho de uma partida é proporcional ao tempo-meta (5 min = 0,45%)', W.MISSION_POINTS.samples === 45 && W.MISSION_POINTS.operation === 144);
-  // setor fixo resiste: avanço inimigo é metade do normal em média
+  
   const fixo = { h: W.SCALE, i: 0, r: 0 }, soft = { h: 9000, i: 1000, r: 0 };
   check('o inimigo só pode empurrar quem tem vizinho dominado por facção (underPressure)', typeof W.underPressure === 'function');
   console.log(fails ? `${fails} falha(s)` : 'todos os testes passaram');

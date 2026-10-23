@@ -27,20 +27,20 @@ enquanto a operação está em andamento. Na operação, o grupo compartilha os 
 - **Amigos:** enviar e aceitar/recusar/cancelar pedido, remover, **bloquear/desbloquear**, ver quem está online e em qual setor, **convidar** para o esquadrão (convite vale 60 s) e
   entrar no esquadrão de um amigo. Bloqueado não pede amizade, não convida nem entra nos seus esquadrões. Tabelas `friendships` e `blocks`.
 - **Mapa (Novo jogo → MAPA):** mostra o mapa do mundo online somente para ver, sem login (`GET /api/world`, público e com limite de taxa). Cada setor mostra a **liberação**
-  em destaque: número grande, barra até os 50% e quanto falta (com a contribuição da missão escolhida). A porcentagem também aparece escrita nas células do mapa, no HUD
+  em destaque: número grande, barra até os 70% e quanto falta (com a contribuição da missão escolhida). A porcentagem também aparece escrita nas células do mapa, no HUD
   da missão ("SETOR K16 · liberação 7,05% de 50,00% · vitória +7,05%") e na tela de resultado.
 - **Amizades (Modo online → AMIZADES):** adicionar, pedidos, bloquear, convidar, **jogados recentemente** e **chat** (com amigos online e com o esquadrão). O Multipunk só repassa a
   mensagem em memória (até 300 caracteres, limite de 30 por minuto): **não grava conversa nem dados**. O histórico e a lista de recentes ficam só em `localStorage` do seu aparelho
   e dá para apagar. Mensagem para amigo offline não é entregue.
 - **Menu:** **Mapa** (mundo online, partida livre, arsenal e melhorias) e **Comunicações** (amizades, chat, recentes e sala por código).
-- **Estágios do setor:** *em disputa* (humanos abaixo de 50%) → *dominado* (50% ou mais, ainda restam inimigos: são necessárias mais missões para **erradicá-los**) → *fixo* (100% humano).
-  O setor fixo resiste ao avanço inimigo (metade) e, se estiver atrás de território humano, **nenhuma facção alcança**: a guerra só avança de vizinho para vizinho, a partir de setores dominados por ela.
+- **Estágios do setor:** *em disputa* (humanos abaixo de 70%) → *dominado* (70% ou mais, ainda restam inimigos: são necessárias mais missões para **erradicá-los**) → *reivindicado* (100% humano). O mesmo vale para os inimigos: dominam a partir de 70% e reivindicam a 100%.
+  O setor reivindicado, se estiver atrás de território humano, **nenhuma facção alcança**: a guerra só avança de vizinho para vizinho, a partir de setores dominados por ela.
   Um setor dominado ou fixo ao lado de território inimigo aparece como **sob ataque** e pede missões de **defesa**.
 - **Guerra dinâmica:** a cada minuto cada facção ataca vários setores vizinhos, tanto os humanos quanto a outra facção (criando **fronteiras** onde insetos e robôs aparecem juntos). No mapa, fronteiras mostram a faixa roxa × vermelha e os setores que mudaram há pouco pulsam;
-  no painel do setor há **duas barras**: a luta entre insetos e robôs e o avanço humano (azul, com os marcos de 50% e 100%), com setas de quem está ganhando terreno. **Partida livre** mostra os setores que mais precisam de atenção (os que estão para ser retomados, os perto de dominar e as fronteiras) e a partida vale para o mundo. Sem contas no servidor (sem `DATABASE_URL`), ela vira um treino sem efeito no mundo.
+  no painel do setor há **duas barras**: a luta entre insetos e robôs e o avanço humano (azul, com os marcos de 70% e 100%), com setas de quem está ganhando terreno. **Partida livre** mostra os setores que mais precisam de atenção (os que estão para ser retomados, os perto de dominar e as fronteiras) e a partida vale para o mundo. Sem contas no servidor (sem `DATABASE_URL`), ela vira um treino sem efeito no mundo.
 - **Progresso do setor:** cada missão vale um progresso base e **cada nível de ameaça soma +1**; **1 ponto = 0,01%** do setor.
   Base: 0,0015% por segundo do tempo-meta da missão (partida de 5 min = 0,45%): Operação Gerador 1,44% · Limpeza e Rainha 0,54% · Coleta, Faróis e Extração 0,45% · Defesa 0,36%
-  (ex.: Operação Gerador no nível 10 = 1,54%). Com 50% ou mais o setor passa a ser dos humanos. Derrota devolve 25% (1/4) do que a missão valeria ao inimigo.
+  (ex.: Operação Gerador no nível 10 = 1,54%). Com 70% ou mais o setor passa a ser dos humanos. Derrota devolve 25% (1/4) do que a missão valeria ao inimigo.
 
 ## Contas, mundo compartilhado e banco (Neon)
 Com `DATABASE_URL` definida o servidor liga **login obrigatório** (usuário, senha e confirmar senha) e a **campanha única para todos os jogadores**:

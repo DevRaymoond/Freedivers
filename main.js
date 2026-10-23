@@ -1877,12 +1877,12 @@ function barsHtml(sc, gain, tr) {                         // duas barras: a luta
     <div class="fightbar"><i style="width:${sc.i / et * 100}%;background:${OWN.I.color}"></i><i style="width:${sc.r / et * 100}%;background:${OWN.R.color}"></i></div>
     <div class="b2-l"><span style="color:${OWN.I.color}">Insetos${arrow(tr && tr.d.i)}</span><span style="color:${OWN.R.color}">Robôs${arrow(tr && tr.d.r)}</span></div></div>` : '';
   const hp = sc.h / 100, add = gain ? Math.min(100 - hp, gain / 100) : 0;
-  const msg = st === 'fixo' ? 'Setor fixo dos humanos.'
+  const msg = st === 'fixo' ? 'Setor reivindicado pelos humanos.'
     : st === 'dominado' ? `Dominado. Faltam ${WL.pct2(WL.SCALE - sc.h)} para erradicar os inimigos e fixar${gain ? ` · esta missão +${WL.pct2(gain)}` : ''}`
     : `Faltam ${WL.pct2(need - sc.h)} para dominar${gain ? ` · esta missão <b>+${WL.pct2(gain)}</b> (~${Math.ceil((need - sc.h) / gain)} vitória${Math.ceil((need - sc.h) / gain) > 1 ? 's' : ''})` : ''}`;
   return `${fight}<div class="bar2"><div class="b2-h"><span>Avanço humano</span><small><span class="stage st-${st}">${WL.STAGE_NAME[st]}</span></small></div>
-    <div class="humanbar"><i style="width:${hp}%"></i>${add ? `<em style="left:${hp}%;width:${add}%"></em>` : ''}<u style="left:50%"></u></div>
-    <div class="b2-l"><b style="color:${OWN.H.color}">${WL.pct2(sc.h)}${arrow(tr && tr.d.h)}</b><span>dominado 50%</span><span>fixo 100%</span></div><small class="b2-m">${msg}</small></div>`;
+    <div class="humanbar"><i style="width:${hp}%"></i>${add ? `<em style="left:${hp}%;width:${add}%"></em>` : ''}<u style="left:${WL.HUMAN_MIN / 100}%"></u></div>
+    <div class="b2-l"><b style="color:${OWN.H.color}">${WL.pct2(sc.h)}${arrow(tr && tr.d.h)}</b><span>dominado ${WL.HUMAN_MIN / 100}%</span><span>reivindicado 100%</span></div><small class="b2-m">${msg}</small></div>`;
 }
 function renderCampCell(W) {
   const box = $(W.id + 'Cell'); if (!box) return;
@@ -1894,7 +1894,7 @@ function renderCampCell(W) {
   const stage = WL.stageOf(sc), pressure = WL.underPressure(GEO.idx, W.sec, ckey(o));
   const head = `<div class="stat-line"><b>Setor ${cellName(o)}</b><small style="color:${OWN[f].color}">${OWN[f].name} · ${BIOME_NAME[o.b]}${pressure && stage !== 'disputa' ? ' · <b style="color:#ff7a5a">sob ataque</b>' : ''}</small></div>
     <div id="${W.id}Lib">${barsHtml(sc, 0, trendOf(W, ckey(o)))}</div>`;
-  if (sc.h >= WL.SCALE) { box.innerHTML = `${head}<small style="color:var(--dim)">${WL.underPressure(GEO.idx, W.sec, ckey(o)) ? 'Fixo, mas há inimigos por perto: eles resistem menos ao ataque deste setor.' : 'Protegido: está atrás do território dos humanos.'}</small>`; return; }
+  if (sc.h >= WL.SCALE) { box.innerHTML = `${head}<small style="color:var(--dim)">${WL.underPressure(GEO.idx, W.sec, ckey(o)) ? 'Reivindicado, mas há inimigos por perto: eles resistem menos ao ataque deste setor.' : 'Protegido: está atrás do território dos humanos.'}</small>`; return; }
   if (W.viewOnly) { box.innerHTML = `${head}<small style="color:var(--dim)">${attackable(W, o) ? 'Pode ser atacado.' : 'Fora de alcance por enquanto.'}</small><button class="btn" id="mapGoOnline" style="margin-top:6px;padding:6px 14px;font-size:11px">Entrar para atacar</button>`; $('mapGoOnline').onclick = () => { if (!AUTH.user && AUTH.enabled) showAuth('', 'world'); else showTab('world'); }; return; }
   const squadsBox = `<div class="mini-h">Esquadrões aqui</div><div id="${W.id}Squads"></div>`;
   if (!attackable(W, o)) { box.innerHTML = `${head}<small style="color:var(--dim)">Fora de alcance. Domine um setor vizinho antes.</small>${squadsBox}`; renderSquadList(W); return; }

@@ -54,3 +54,7 @@
 - Inimigo: avanço **contínuo e fixo** de 0,0015% por segundo (9 pontos por minuto) em cada setor vizinho de um setor que a facção já tem com 50% ou mais; 100% em 18 h 31 min por setor. Sem sorteio e sem bônus por setor fixo. Sem jogadores, o planeta cai em ~4 dias (o último reduto de 3 setores resiste).
 - Jogadores: o ganho da vitória é o mesmo ritmo aplicado ao tempo-meta da missão (`MISSION_PAR`): 5 min = 0,45%, Operação Gerador 1,44%. O tempo só entra no cálculo, a partida não ganha relógio. Derrota continua custando 1/4.
 - Removidas as constantes `ATTACK_BASE` e `ENEMY_EDGE`; novos `ENEMY_PTS_PER_MIN`, `MISSION_PAR`.
+
+## 2026-10-23 (dominado a 70%, reivindicado a 100%)
+- `HUMAN_MIN` passa de 50% para 70%: o setor é dominado com 70% ou mais e **reivindicado** com 100% (antes "fixo"), tanto para os humanos quanto para as facções.
+- O inimigo só passa a empurrar os vizinhos quando domina o setor (70%), mas continua empurrando o próprio setor até 100%. Corrigido: antes ele parava ao passar do limite. Sem jogadores, o planeta cai em ~6 dias. O bônus de resistência do setor fixo foi removido.
