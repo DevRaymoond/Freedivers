@@ -37,6 +37,16 @@ PORT=8765 node server.js            # escuta em 0.0.0.0 (use HOST=127.0.0.1 atr�
   principal** — quem está em partida (ou pausado nela) nunca é interrompido. Quem está com versão antiga não entra em sala de versão nova.
 - `node tools/test_relay.js` testa as regras das salas (código, limite de 4, sala travada, saída do host).
 
+## Menu e facções
+O menu principal tem **Novo jogo · Modo online · Configurações · Controles**. Em *Novo jogo* você escolhe a **facção inimiga** e a operação
+(Arsenal e Melhorias ficam ali dentro):
+- **Insetos** (o enxame): rastejadores, cuspidores, brutos, bombardeiros, investidores e a Rainha da colmeia.
+- **Robôs** (exército mecha, `assets/robot.glb` + `bots.js`): soldados-lâmina e lanceiros com **espada**, atiradores com **rifle** (balas de plasma),
+  pesados com espadão, kamikazes e o Comandante Mecha (espada + canhão). Mesmos papéis e comportamentos dos insetos; o esqueleto é animado por código
+  (ciclo de corrida, cinemática inversa nos braços, golpe de espada, mira). O modelo veio sem UV, então a cor é pintada por região do corpo.
+Online, o host escolhe a facção e os clientes seguem. **Créditos só são concedidos se o objetivo for concluído**; derrota ou abandono não pagam.
+*Configurações*: volume, sensibilidade da mira, qualidade gráfica (alta/média/baixa), tipo de controle (automático/PC/toque) e tela cheia.
+
 ## Operações
 1. **Operação Gerador** (campanha, nível 1 = modo relax): você nasce a ~120 m do objetivo e atravessa o mapa com pelotões patrulhando
    (notam proximidade, tiros e explosões e alertam os vizinhos); defende o gerador por 8 ondas; segura a zona de extração (raio 50 m) por 1:30;
@@ -62,7 +72,7 @@ botão **FOGO** grande (segure e arraste para mirar atirando) e botões DASH, RE
 - Melhorias permanentes (+1 de dano, +5 de vida…): 500 créditos + 250 por nível.
 
 ## Estrutura
-- `server.js` servidor estático + relé WebSocket das salas · `net.js` cliente de rede · `main.js` jogo · `cursor.js` cursor "blob"
-- `assets/character.glb` personagem · `lib/` three.js · `tools/` geração do personagem e visualizadores
+- `server.js` servidor estático + relé WebSocket das salas · `net.js` cliente de rede · `main.js` jogo · `bots.js` robôs · `cursor.js` cursor "blob"
+- `assets/character.glb` personagem · `assets/robot.glb` inimigo robô · `lib/` three.js · `tools/` geração do personagem e visualizadores
 - Personagem: `tools/build_final.py` (precisa de Python; `tools/source/` com os modelos originais não vai para o repositório):
   `python tools/build_final.py tools/source/cyber_rigged.glb tools/source/texture.webp assets/character.glb --fix-face`

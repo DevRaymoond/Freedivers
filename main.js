@@ -2,9 +2,20 @@ import * as THREE from 'three';
 import { GLTFLoader } from './lib/jsm/loaders/GLTFLoader.js';
 import { clone as cloneSkeleton } from './lib/jsm/utils/SkeletonUtils.js';
 import { net } from './net.js';
+import { loadBots, createBot, animateBot, botsReady } from './bots.js';
 
-// Celular/tablet: tela de toque como entrada principal (ou ?touch=1 para testar no computador)
-const isTouch = new URLSearchParams(location.search).has('touch') || (matchMedia('(pointer: coarse)').matches && navigator.maxTouchPoints > 0);
+// Configurações do jogador (salvas só neste aparelho)
+const SET_KEY = 'multipunk_settings';
+const coarse = matchMedia('(pointer: coarse)').matches && navigator.maxTouchPoints > 0;
+function loadSettings() {
+  let s = {};
+  try { s = JSON.parse(localStorage.getItem(SET_KEY) || '{}'); } catch { /* sem armazenamento */ }
+  return Object.assign({ volume: 0.8, sens: 1, quality: coarse ? 'medium' : 'high', input: 'auto' }, s);
+}
+const settings = loadSettings();
+const saveSettings = () => { try { localStorage.setItem(SET_KEY, JSON.stringify(settings)); } catch { /* ok */ } };
+// Celular/tablet: tela de toque como entrada principal (modo automático, forçado nas configurações ou ?touch=1 para testar no PC)
+const isTouch = new URLSearchParams(location.search).has('touch') || settings.input === 'touch' || (settings.input === 'auto' && coarse);
 
 // ───────────────────────── Configuração ─────────────────────────
 let ARENA_R = 95;
@@ -15,6 +26,22 @@ const WEAPONS = [
   { id: 'dmr', name: 'Marksman Lança', mag: 10, reserveMax: 70, reserve0: 40, rate: 2.6, dmg: 52, spread: 0.002, reload: 1.9, range: 220, pellets: 1, auto: false, recoil: 0.022 },
 ];
 const SUPPLY_COOLDOWN = 35, STRIKE_COOLDOWN = 60;
+
+// Facção dos robôs: mesmos papéis dos insetos (corpo a corpo com espada, atirador com arma, pesado, kamikaze, investida e chefe).
+// height/radius definem a esfera de acerto no meio do corpo; reach é o alcance do golpe (para animar a espada).
+const BOT_TYPES = {
+  crawler: { hp: 40, speed: 5.4, dmg: 9, radius: 0.85, height: 1.0, scale: 0.9, color: 0x4b4e56, kind: 'sword', reach: 2.6 },
+  spitter: { hp: 55, speed: 3.2, dmg: 12, radius: 0.9, height: 1.05, scale: 1.0, color: 0x4b4e56, kind: 'gun', reach: 0 },
+  brute:   { hp: 520, speed: 3.2, dmg: 28, radius: 1.5, height: 1.8, scale: 1.7, color: 0x4b4e56, kind: 'greatsword', reach: 4.6 },
+  bomber:  { hp: 45, speed: 5.0, dmg: 35, radius: 0.75, height: 0.85, scale: 0.85, color: 0x4b4e56, kind: 'bomb', reach: 0 },
+  charger: { hp: 170, speed: 3.8, dmg: 32, radius: 1.1, height: 1.3, scale: 1.3, color: 0x4b4e56, kind: 'lance', reach: 3.4 },
+  queen:   { hp: 2000, speed: 2.5, dmg: 38, radius: 2.6, height: 3.0, scale: 3.0, color: 0x4b4e56, kind: 'boss', reach: 8 },
+};
+let curFaction = 'bugs';                       // 'bugs' (insetos) | 'bots' (robôs); no online o host decide
+const ET = () => curFaction === 'bots' ? BOT_TYPES : ENEMY_TYPES;
+const FT = s => curFaction !== 'bots' ? s : String(s)
+  .replace(/Rainha da colmeia/g, 'Comandante Mecha').replace(/A Rainha/g, 'O Comandante').replace(/a Rainha/g, 'o Comandante').replace(/Rainha/g, 'Comandante')
+  .replace(/ela invoca/g, 'ele convoca').replace(/Chefe da colmeia/g, 'Chefe da fortaleza').replace(/enxame/g, 'exército').replace(/colmeia/g, 'fortaleza');
 
 const ENEMY_TYPES = {
   crawler: { hp: 30, speed: 6.2, dmg: 9, radius: 0.9, height: 0.8, scale: 1, color: 0x8a2b22 },
@@ -105,6 +132,16 @@ sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
 Object.assign(sun.shadow.camera, { left: -45, right: 45, top: 45, bottom: -45, near: 1, far: 160 });
 scene.add(sun, sun.target);
+function applyQuality() {
+  const q = settings.quality, cap = q === 'high' ? (isTouch ? 1.5 : 2) : q === 'medium' ? 1.25 : 1;
+  renderer.setPixelRatio(Math.min(devicePixelRatio || 1, cap)); renderer.setSize(innerWidth, innerHeight);
+  const shadows = q !== 'low';
+  if (renderer.shadowMap.enabled !== shadows) { renderer.shadowMap.enabled = shadows; scene.traverse(o => { if (o.material) [].concat(o.material).forEach(m => { m.needsUpdate = true; }); }); }
+  sun.castShadow = shadows;
+  const size = q === 'high' ? 2048 : 1024;
+  if (sun.shadow.mapSize.x !== size) { sun.shadow.mapSize.set(size, size); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; } }
+}
+applyQuality();
 
 // Chão com textura procedural
 function makeGroundTexture() {
@@ -369,15 +406,16 @@ const rightOf = yaw => new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
 
 let msgTimer = 0;
 function say(text, secs = 2.5) {
+  text = FT(text);
   $('msg').textContent = text;
   $('msg').classList.add('on');
   msgTimer = secs;
 }
 
 // Áudio procedural (sem arquivos)
-let audio = null;
+let audio = null, master = null;
 function ensureAudio() {
-  if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
+  if (!audio) { audio = new (window.AudioContext || window.webkitAudioContext)(); master = audio.createGain(); master.gain.value = settings.volume; master.connect(audio.destination); }
   if (audio.state === 'suspended') audio.resume();
 }
 function noise(dur, gain, freq) {
@@ -392,7 +430,7 @@ function noise(dur, gain, freq) {
   f.type = 'lowpass'; f.frequency.value = freq;
   const g = audio.createGain();
   g.gain.value = gain;
-  src.connect(f).connect(g).connect(audio.destination);
+  src.connect(f).connect(g).connect(master);
   src.start();
 }
 function beep(freq, dur, gain = 0.08) {
@@ -402,7 +440,7 @@ function beep(freq, dur, gain = 0.08) {
   o.frequency.value = freq;
   g.gain.setValueAtTime(gain, audio.currentTime);
   g.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + dur);
-  o.connect(g).connect(audio.destination);
+  o.connect(g).connect(master);
   o.start(); o.stop(audio.currentTime + dur);
 }
 
@@ -427,7 +465,28 @@ function addTracer(from, to) {
 }
 
 // ───────────────────────── Inimigos ─────────────────────────
+function makeBotMesh(type) {
+  const t = BOT_TYPES[type];
+  const bot = createBot(t.kind);
+  const g = new THREE.Group(); g.add(bot.root); g.userData.bot = bot;
+  g.scale.setScalar(t.scale);
+  return g;
+}
+function animateBots(dt) {
+  if (curFaction !== 'bots') return;
+  for (const e of enemies) {
+    const bot = e.mesh.userData.bot; if (!bot) continue;
+    const p = e.mesh.position;
+    if (camPos.distanceToSquared(p) > 100 * 100) { bot.prev = null; continue; }   // longe: congela a pose
+    let speed = 0;
+    if (bot.prev) speed = Math.hypot(p.x - bot.prev.x, p.z - bot.prev.z) / Math.max(dt, 1e-3); else bot.prev = new THREE.Vector3();
+    bot.prev.copy(p);
+    const near = nearestLive(p), d = near ? Math.hypot(near.pos.x - p.x, near.pos.z - p.z) : 99;
+    animateBot(bot, { dt, speed: Math.min(speed, 9), engaged: e.t.reach > 0 && d < e.t.reach, aim: e.t.kind === 'gun' && d < 42 ? 1 : 0, charge: e.st === 'charge' });
+  }
+}
 function makeEnemyMesh(type) {
+  if (curFaction === 'bots' && botsReady()) return makeBotMesh(type);
   const t = ENEMY_TYPES[type];
   const g = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({ color: t.color, roughness: 0.7, flatShading: true });
@@ -494,7 +553,7 @@ function makeEnemyMesh(type) {
 }
 
 function spawnEnemy(type, atPos, opts = {}) {
-  const t = ENEMY_TYPES[type];
+  const t = ET()[type];
   const mesh = makeEnemyMesh(type);
   let p = atPos;
   if (!p) {
@@ -649,9 +708,10 @@ function maybeDrop(pos) {
   net.all({ k: 'drop', id, type, x: pos.x, z: pos.z });
 }
 
+const deathColor = e => curFaction === 'bots' ? (e.type === 'spitter' ? 0xffb03a : 0xc0c6ce) : (e.type === 'spitter' ? 0xa4ff6a : 0xc23b2a);
 function killEnemy(e) {
   if (!enemies.includes(e)) return;
-  burst(e.mesh.position.clone().setY(e.t.height), e.type === 'spitter' ? 0xa4ff6a : 0xc23b2a, e.type === 'brute' || e.type === 'queen' ? 40 : 14, 6);
+  burst(e.mesh.position.clone().setY(e.t.height), deathColor(e), e.type === 'brute' || e.type === 'queen' ? 40 : 14, 6);
   scene.remove(e.mesh);
   enemies.splice(enemies.indexOf(e), 1);
   kills++;
@@ -1380,6 +1440,7 @@ function startMission(id, levelArg) {
   ensureAudio();
   const L = Math.min(LEVEL_MAX, Math.max(1, Math.round(levelArg || missionLevel(id))));
   relax = L === 1;                                       // modo relax só no nível 1
+  curFaction = selFaction;
   clearWorld();
   const def = MISSIONS.find(m => m.id === id);
   applyBiome(def ? def.biome : 'desert');
@@ -1417,7 +1478,7 @@ function startMission(id, levelArg) {
   afterMissionBuilt(id);
   if (net.role === 'host') {
     net.lock(true);
-    net.all({ k: 'start', id, title: mission.title, relax, level: L, biome: def ? def.biome : 'desert', R: ARENA_R, rocks: rockData,
+    net.all({ k: 'start', id, faction: curFaction, title: mission.title, relax, level: L, biome: def ? def.biome : 'desert', R: ARENA_R, rocks: rockData,
               spawn, lives: mission.lives || 0, par: mission.par, mods: [mods.hp, mods.count, mods.speed, mods.edmg, mods.elite] });
   }
   state = 'playing'; uiOpen = false;
@@ -1435,9 +1496,10 @@ function resetLocalPlayer() {
 }
 function afterMissionBuilt(id) {
   setNameTag(playerGroup, myName());
+  mission.title = FT(mission.title);
   $('oTitle').textContent = `${mission.title} · NV ${mission.level}`;
   $('boss').style.display = id === 'queen' ? 'block' : 'none';
-  $('bossName').textContent = 'RAINHA DA COLMEIA';
+  $('bossName').textContent = FT('Rainha da colmeia').toUpperCase();
   $('hud').classList.add('on');
   $('menu').classList.add('hidden'); $('results').classList.remove('on');
   $('resume').style.display = 'none'; $('abort').style.display = 'none';
@@ -1503,7 +1565,7 @@ function buildResults(win) {
   const { rows, total } = computeScore(win);
   return { win, mid: mission.id, title: `${mission.title} · NV ${mission.level || 1}`, rows, total };
 }
-const creditFor = (id, win, total) => Math.round((total * 1.2 + (net.role === 'solo' ? kills : (killsBy[id] || 0)) * 0.5 + (win ? 40 : 0)) * levelScale(mission.level || 1).reward);
+const creditFor = (id, win, total) => !win ? 0 : Math.round((total * 1.2 + (net.role === 'solo' ? kills : (killsBy[id] || 0)) * 0.5 + (win ? 40 : 0)) * levelScale(mission.level || 1).reward);
 function presentResults(r) {
   save.credits += r.credits;
   const prev = save.best[r.mid];
@@ -1520,13 +1582,32 @@ function presentResults(r) {
   document.querySelectorAll('.res-total').forEach(el => { el.style.animation = 'none'; void el.offsetWidth; el.style.animation = `rowin .6s ${t0}s forwards`; });
   $('resScore').textContent = r.total;
   $('resRank').textContent = r.win ? rankOf(r.total) : '—';
-  $('resCredits').textContent = `+${r.credits} créditos para você${r.kills ? ` (${r.kills} abates seus)` : ''}${record ? ' · NOVO RECORDE!' : ''}`;
+  $('resCredits').textContent = r.win ? `+${r.credits} créditos para você${r.kills ? ` (${r.kills} abates seus)` : ''}${record ? ' · NOVO RECORDE!' : ''}`
+    : 'Sem créditos: o objetivo não foi concluído.';
   $('results').classList.add('on');
 }
 
-let selMission = 'operation', activeTab = 'ops';
-const TABS = [['ops', 'OPERAÇÕES'], ['online', 'ONLINE'], ['arsenal', 'ARSENAL'], ['upg', 'MELHORIAS'], ['keys', 'CONTROLES']];
+let selMission = 'operation', activeTab = 'home';
+let selFaction = save.faction === 'bots' ? 'bots' : 'bugs';
+curFaction = selFaction;
+const TABS = [['ops', 'NOVO JOGO'], ['online', 'MODO ONLINE'], ['settings', 'CONFIGURAÇÕES'], ['keys', 'CONTROLES']];
+const SUB_OF = { arsenal: 'ops', upg: 'ops' };           // arsenal e melhorias moram dentro de NOVO JOGO
+const FACTIONS = {
+  bugs: { name: 'INSETOS', kick: 'O ENXAME', desc: 'Rastejadores, cuspidores, brutos, bombardeiros, investidores e a Rainha da colmeia. Veloz, numeroso e barulhento.' },
+  bots: { name: 'ROBÔS', kick: 'EXÉRCITO MECHA', desc: 'Soldados-lâmina com espada, atiradores com rifle, pesados, kamikazes, lanceiros e o Comandante Mecha. Metódico e armado.' },
+};
+function setFaction(f) {
+  if (net.role === 'client') return;
+  selFaction = curFaction = f; save.faction = f; persist();
+  if (f === 'bots') loadBots().catch(() => {});
+  renderAll();
+}
 const BIOME_NAME = { desert: 'Deserto', ice: 'Gelo', toxic: 'Pântano tóxico', volcanic: 'Vulcânico' };
+const ENEMY_INFO_BOTS = [
+  ['Soldado-lâmina', 'Veloz. Corre até você e golpeia com a espada.'], ['Atirador', 'Mantém distância e dispara rajadas de plasma.'],
+  ['Pesado', 'Gigante com espadão. Cada golpe dói.'], ['Kamikaze', 'Corre até você e detona. Atire de longe.'],
+  ['Lanceiro', 'Avisa e investe com a espada em linha reta. Desvie com o dash.'], ['Comandante Mecha', 'Chefe: rajadas, golpes e convocação de tropas.'],
+];
 const ENEMY_INFO = [
   ['Rastejador', 'Veloz e frágil. Ataca em bando, corpo a corpo.'], ['Cuspidor', 'Mantém distância e lança bolas de ácido.'],
   ['Bruto', 'Enorme e resistente. Cada golpe dói.'], ['Bombardeiro', 'Corre até você e explode. Atire de longe.'],
@@ -1540,24 +1621,70 @@ function levelPreview(m, L) {
           <div><small>RECOMPENSA</small><b>${pct(levelScale(L).reward)}</b></div>`;
 }
 const levelTag = v => v === 1 ? 'RELAX' : v >= 15 ? 'EXTREMO' : v >= 8 ? 'DIFÍCIL' : 'NORMAL';
+const subNav = on => `<div class="subnav">${[['ops', 'OPERAÇÕES'], ['arsenal', 'ARSENAL'], ['upg', 'MELHORIAS']].map(([id, l]) => `<button data-sub="${id}" class="${id === on ? 'on' : ''}">${l}</button>`).join('')}</div>`;
+function bindSubNav(pane) { pane.querySelectorAll('[data-sub]').forEach(b => { b.onclick = () => showTab(b.dataset.sub); }); }
+function factionRow() {
+  const canPick = net.role !== 'client';
+  return `<div class="fac-row">${Object.entries(FACTIONS).map(([id, f]) => `
+    <button class="fac-card ${id} ${id === selFaction ? 'on' : ''}" data-fac="${id}" ${canPick ? '' : 'disabled'}>
+      <small>${f.kick}</small><b>${f.name}</b><span>${f.desc}</span></button>`).join('')}</div>
+    ${canPick ? '' : '<small style="color:var(--dim)">Online, quem escolhe a facção inimiga é o host.</small>'}`;
+}
+function bindFactionRow(pane) { pane.querySelectorAll('[data-fac]').forEach(b => { b.onclick = () => setFaction(b.dataset.fac); }); }
+function renderHome() {
+  const hero = [['ops', 'NOVO JOGO', 'Escolha a facção inimiga e a operação'], ['online', 'MODO ONLINE', 'Crie uma sala ou entre com o código do host'],
+    ['settings', 'CONFIGURAÇÕES', 'Áudio, mira, gráficos e tipo de controle'], ['keys', 'CONTROLES', 'Teclas, botões de toque e regras de XP']];
+  $('pane-home').innerHTML = `<div class="home">
+    <div class="home-menu">${hero.map(([id, t, d], i) => `<button class="home-btn" data-go="${id}"><i>${String(i + 1).padStart(2, '0')}</i><b>${t}</b><span>${d}</span></button>`).join('')}</div>
+    <div class="home-side"><small>MULTIPUNK</small><h1>Duas facções.<br>Uma operação.</h1>
+      <p>Insetos ou robôs, sozinho ou com até 3 amigos. Cada fase tem o seu nível de ameaça e a sua recompensa: <b>créditos só vêm quando o objetivo é concluído</b>.</p>
+      <div class="home-facs"><span class="bugs">INSETOS</span><span class="bots">ROBÔS</span></div></div></div>`;
+  $('pane-home').querySelectorAll('[data-go]').forEach(b => { b.onclick = () => showTab(b.dataset.go); });
+}
+function renderSettings() {
+  const seg = (key, opts) => `<div class="seg" data-key="${key}">${opts.map(([v, l]) => `<button data-v="${v}" class="${String(settings[key]) === String(v) ? 'on' : ''}">${l}</button>`).join('')}</div>`;
+  $('pane-settings').innerHTML = `<h2 class="sec">Configurações · salvas só neste aparelho</h2>
+    <div class="set-list">
+      <div class="set-row"><div><b>Volume geral</b><small>Efeitos sonoros do jogo</small></div><div class="set-ctl"><input type="range" id="setVol" min="0" max="100" value="${Math.round(settings.volume * 100)}"><em id="setVolV">${Math.round(settings.volume * 100)}%</em></div></div>
+      <div class="set-row"><div><b>Sensibilidade da mira</b><small>${isTouch ? 'Arrastar o dedo na tela' : 'Movimento do mouse'}</small></div><div class="set-ctl"><input type="range" id="setSens" min="0.4" max="2.5" step="0.05" value="${settings.sens}"><em id="setSensV">${settings.sens.toFixed(2)}×</em></div></div>
+      <div class="set-row"><div><b>Qualidade gráfica</b><small>Baixa desliga as sombras (mais fluidez em celulares)</small></div>${seg('quality', [['high', 'Alta'], ['medium', 'Média'], ['low', 'Baixa']])}</div>
+      <div class="set-row"><div><b>Tipo de controle</b><small>Automático detecta celular e tablet. Mudar recarrega a página.</small></div>${seg('input', [['auto', 'Automático'], ['pc', 'Teclado e mouse'], ['touch', 'Toque']])}</div>
+      <div class="set-row"><div><b>Tela cheia</b><small>Melhor para jogar</small></div><div class="set-ctl"><button class="btn" id="setFs">Alternar tela cheia</button></div></div>
+      <div class="set-row"><div><b>Restaurar padrões</b><small>Não apaga créditos, melhorias nem recordes</small></div><div class="set-ctl"><button class="btn ghost" id="setReset">Restaurar</button></div></div>
+    </div>`;
+  const vol = $('setVol'), sens = $('setSens');
+  vol.oninput = () => { settings.volume = vol.value / 100; $('setVolV').textContent = `${vol.value}%`; if (master) master.gain.value = settings.volume; saveSettings(); };
+  vol.onchange = () => { ensureAudio(); beep(660, 0.12, 0.1); };
+  sens.oninput = () => { settings.sens = +sens.value; $('setSensV').textContent = `${settings.sens.toFixed(2)}×`; saveSettings(); };
+  document.querySelectorAll('#pane-settings .seg').forEach(g => g.querySelectorAll('button').forEach(b => b.onclick = () => {
+    const key = g.dataset.key; settings[key] = b.dataset.v; saveSettings();
+    g.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    if (key === 'quality') applyQuality();
+    if (key === 'input') location.reload();
+  }));
+  $('setFs').onclick = () => { try { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen(); } catch { /* sem suporte */ } };
+  $('setReset').onclick = () => { Object.assign(settings, { volume: 0.8, sens: 1, quality: coarse ? 'medium' : 'high' }); saveSettings(); applyQuality(); if (master) master.gain.value = settings.volume; renderSettings(); };
+}
 function renderOps() {
   const m = MISSIONS.find(x => x.id === selMission);
   const best = save.best[m.id];
   const L = missionLevel(m.id), canPick = net.role !== 'client';
   const danger = '■'.repeat(m.danger) + '□'.repeat(5 - m.danger);
   $('pane-ops').innerHTML = `
-    <h2 class="sec">Selecionar operação${net.role !== 'solo' ? ` · SALA ${net.code} · ${net.roster.length} jogador(es)` : ''}</h2>
+    ${subNav('ops')}
+    <h2 class="sec">Facção inimiga</h2>${factionRow()}
+    <h2 class="sec" style="margin-top:22px">Selecionar operação${net.role !== 'solo' ? ` · SALA ${net.code} · ${net.roster.length} jogador(es)` : ''}</h2>
     <div class="ops">
       <div class="op-list">${MISSIONS.map((x, i) => `
         <button class="op-item ${x.id === selMission ? 'on' : ''}" data-id="${x.id}">
           <i>${String(i + 1).padStart(2, '0')} · ${x.tag} · NV ${missionLevel(x.id)}</i><span>${save.best[x.id] != null ? 'MELHOR ' + save.best[x.id] : ''}</span>
-          <b>${x.title}</b></button>`).join('')}</div>
+          <b>${FT(x.title)}</b></button>`).join('')}</div>
       <div class="op-detail">
         <div class="op-banner" style="background:${BIOME_CSS[m.biome]}"><div class="tagrow">
           <span class="tag">${BIOME_NAME[m.biome]}</span><span class="tag hot">PERIGO ${danger}</span><span class="tag ok">${m.tag}</span></div></div>
         <div class="op-body">
-          <h3>${m.title}</h3>
-          <p>${m.desc}</p>
+          <h3>${FT(m.title)}</h3>
+          <p>${FT(m.desc)}</p>
           <div class="phases">${m.phases.map((p, i) => `<span>${i + 1}. ${p}</span>`).join('')}</div>
           <div class="lvl">
             <div class="lvl-head"><small>NÍVEL DE AMEAÇA DESTA FASE</small><b id="lvNum">${L}</b><i id="lvTag">${levelTag(L)}</i></div>
@@ -1579,6 +1706,7 @@ function renderOps() {
         </div>
       </div>
     </div>`;
+  bindSubNav($('pane-ops')); bindFactionRow($('pane-ops'));
   document.querySelectorAll('.op-item').forEach(b => b.onclick = () => { selMission = b.dataset.id; renderOps(); });
   const setLevel = v => {
     v = Math.min(LEVEL_MAX, Math.max(1, v));
@@ -1590,16 +1718,20 @@ function renderOps() {
   $('lvRange').oninput = e => setLevel(+e.target.value);
   $('lvDn').onclick = () => setLevel(missionLevel(m.id) - 1);
   $('lvUp').onclick = () => setLevel(missionLevel(m.id) + 1);
-  $('deploy').onclick = () => startMission(selMission, missionLevel(selMission));
+  $('deploy').onclick = async () => {
+    if (selFaction === 'bots' && !botsReady()) { $('deploy').disabled = true; $('deploy').textContent = 'Carregando robôs…'; try { await loadBots(); } catch { /* usa o modelo simples */ } }
+    startMission(selMission, missionLevel(selMission));
+  };
 }
 function renderArsenal() {
   const maxOf = k => Math.max(...WEAPONS.map(w => k(w)));
   const bar = (label, v, mx, txt) => `<div class="stat"><span>${label}</span><div class="b"><i style="width:${Math.round(v / mx * 100)}%"></i></div><em>${txt}</em></div>`;
   $('pane-arsenal').innerHTML = `
+    ${subNav('arsenal')}
     <h2 class="sec">Armas · troque com 1 / 2 / 3</h2>
     <div class="grid">${WEAPONS.map((w, i) => `
       <div class="card"><small class="k">ARMA ${i + 1}</small><h4>${w.name}</h4>
-        <p>${w.id === 'smg' ? 'Automática. Cadência alta, boa para o enxame.' : w.id === 'shotgun' ? 'Nove projéteis por tiro. Devastadora de perto.' : 'Tiro único e preciso. Ótima contra cuspidores e brutos.'}</p>
+        <p>${w.id === 'smg' ? FT('Automática. Cadência alta, boa para o enxame.') : w.id === 'shotgun' ? 'Nove projéteis por tiro. Devastadora de perto.' : 'Tiro único e preciso. Ótima contra cuspidores e brutos.'}</p>
         ${bar('Dano', (w.dmg + lvl('dmg')) * w.pellets, maxOf(x => (x.dmg + lvl('dmg')) * x.pellets), (w.dmg + lvl('dmg')) + (w.pellets > 1 ? '×' + w.pellets : ''))}
         ${bar('Cadência', w.rate, maxOf(x => x.rate), w.rate)}
         ${bar('Pente', w.mag, maxOf(x => x.mag), w.mag)}
@@ -1610,11 +1742,13 @@ function renderArsenal() {
       <div class="card"><small class="k">E</small><h4>Suprimentos</h4><p>Uma caixa cai onde você mira: recarrega todas as armas e cura 50. Recarga de ${SUPPLY_COOLDOWN}s. Reduz sua pontuação.</p></div>
       <div class="card"><small class="k">Q</small><h4>Ataque orbital</h4><p>Marca o alvo com uma linha vermelha; seis linhas surgem, giram e se fecham no centro antes do impacto. Fere você também. Recarga de ${Math.max(20, STRIKE_COOLDOWN - 2 * lvl('strike'))}s. Reduz sua pontuação.</p></div>
     </div>
-    <h2 class="sec" style="margin-top:28px">Inimigos</h2>
-    <div class="grid">${ENEMY_INFO.map(e => `<div class="card"><h4>${e[0]}</h4><p style="margin-bottom:0">${e[1]}</p></div>`).join('')}</div>`;
+    <h2 class="sec" style="margin-top:28px">Inimigos · ${FACTIONS[curFaction].name}</h2>
+    <div class="grid">${(curFaction === 'bots' ? ENEMY_INFO_BOTS : ENEMY_INFO).map(e => `<div class="card"><h4>${e[0]}</h4><p style="margin-bottom:0">${e[1]}</p></div>`).join('')}</div>`;
+  bindSubNav($('pane-arsenal'));
 }
 function renderUpgrades() {
   $('pane-upg').innerHTML = `
+    ${subNav('upg')}
     <h2 class="sec">Melhorias permanentes · custo ${upgCost(0)} + ${upgCost(1) - upgCost(0)} por nível</h2>
     <div class="grid">${UPGRADES.map(u => {
       const l = lvl(u.id), maxed = l >= UPG_MAX, cost = upgCost(l);
@@ -1628,6 +1762,7 @@ function renderUpgrades() {
     if (l >= UPG_MAX || save.credits < cost) return;
     save.credits -= cost; save.upg[id] = l + 1; persist(); renderAll();
   });
+  bindSubNav($('pane-upg'));
 }
 function renderKeys() {
   const rows = isTouch ? [
@@ -1642,20 +1777,23 @@ function renderKeys() {
   $('pane-keys').innerHTML = `<h2 class="sec">Controles</h2><table class="keys">${rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('')}</table>
     <h2 class="sec" style="margin-top:28px">Nível e sorteio</h2>
     <table class="keys"><tr><td>XP</td><td>Cada inimigo dá XP; cada nível exige o dobro do anterior.</td></tr>
-    <tr><td>SORTEIO</td><td>Ao subir de nível a sorte decide: pode vir ajuda... ou o enxame ficar mais forte. Ninguém sabe o que vem.</td></tr></table>`;
+    <tr><td>SORTEIO</td><td>Ao subir de nível a sorte decide: pode vir ajuda... ou o inimigo ficar mais forte. Ninguém sabe o que vem.</td></tr></table>`;
 }
 function renderAll() {
   $('credits').textContent = save.credits;
-  renderOps(); renderOnline(); renderArsenal(); renderUpgrades(); renderKeys();
+  if (state === 'menu' || state === 'ended') curFaction = selFaction;
+  renderHome(); renderOps(); renderOnline(); renderArsenal(); renderUpgrades(); renderSettings(); renderKeys();
 }
 function showTab(id) {
   activeTab = id;
-  document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === id));
+  document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === (SUB_OF[id] || id)));
+  $('menu').classList.toggle('is-home', id === 'home');
   document.querySelectorAll('.pane').forEach(p => p.classList.toggle('on', p.id === 'pane-' + id));
 }
 function buildMenu() {
   $('tabs').innerHTML = TABS.map(([id, label]) => `<button class="tab" data-tab="${id}">${label}</button>`).join('');
-  $('view').innerHTML = TABS.map(([id]) => `<section class="pane" id="pane-${id}"></section>`).join('');
+  $('view').innerHTML = ['home', ...TABS.map(t => t[0]), 'arsenal', 'upg'].map(id => `<section class="pane" id="pane-${id}"></section>`).join('');
+  $('logoHome').onclick = () => showTab('home');
   document.querySelectorAll('.tab').forEach(b => b.onclick = () => showTab(b.dataset.tab));
   $('resume').onclick = () => captureInput();
   $('abort').onclick = abortMission;
@@ -1663,7 +1801,8 @@ function buildMenu() {
   $('clickGo').onclick = () => captureInput();
   setNameTag(playerGroup, myName());
   if (isTouch) buildTouchUI();
-  renderAll(); showTab('ops');
+  if (selFaction === 'bots') loadBots().catch(() => {});
+  renderAll(); showTab('home');
 }
 
 // ───────────────────────── Controles de toque (celular) ─────────────────────────
@@ -1703,8 +1842,8 @@ function buildTouchUI() {
   };
   const look = (dx, dy) => {
     if (!live()) return;
-    player.yaw -= dx * TOUCH_LOOK;
-    player.pitch = Math.max(-0.6, Math.min(0.8, player.pitch - dy * TOUCH_LOOK));
+    player.yaw -= dx * TOUCH_LOOK * settings.sens;
+    player.pitch = Math.max(-0.6, Math.min(0.8, player.pitch - dy * TOUCH_LOOK * settings.sens));
   };
   const stick = (p, e) => {
     let dx = e.clientX - p.ox, dy = e.clientY - p.oy;
@@ -1779,8 +1918,8 @@ addEventListener('wheel', e => { if (state === 'playing' && !uiOpen) switchWeapo
 addEventListener('mouseup', e => { if (e.button === 0) mouseDown = false; });
 addEventListener('mousemove', e => {
   if (document.pointerLockElement !== renderer.domElement || state !== 'playing') return;
-  player.yaw -= e.movementX * 0.0022;
-  player.pitch = Math.max(-0.6, Math.min(0.8, player.pitch - e.movementY * 0.0022));
+  player.yaw -= e.movementX * 0.0022 * settings.sens;
+  player.pitch = Math.max(-0.6, Math.min(0.8, player.pitch - e.movementY * 0.0022 * settings.sens));
 });
 // No PC o "foco" do jogo é o ponteiro preso; no celular não existe: a pausa vira um botão na tela.
 const inputLive = () => isTouch ? (state === 'playing' && !uiOpen) : document.pointerLockElement === renderer.domElement;
@@ -2149,7 +2288,8 @@ function enemyTarget(e) {
 }
 
 function spitAt(from, dir, speed, dmg, big) {
-  const pm = new THREE.Mesh(new THREE.SphereGeometry(big ? 0.45 : 0.28, 8, 6), new THREE.MeshBasicMaterial({ color: big ? 0xff40c0 : 0xa4ff6a }));
+  const bt = curFaction === 'bots';
+  const pm = new THREE.Mesh(new THREE.SphereGeometry(big ? (bt ? 0.3 : 0.45) : (bt ? 0.14 : 0.28), 8, 6), new THREE.MeshBasicMaterial({ color: bt ? (big ? 0xff3030 : 0xffb03a) : (big ? 0xff40c0 : 0xa4ff6a) }));
   pm.position.copy(from);
   scene.add(pm);
   projectiles.push({ id: uid(), m: pm, v: dir.clone().normalize().multiplyScalar(speed), life: 4, dmg: dmg * mods.edmg, big });
@@ -2181,7 +2321,7 @@ function updateEnemies(dt) {
       m.position.addScaledVector(steerRocks(m.position, d0, e.t.radius * 0.6, e, sp >= 0 ? tg : null), Math.abs(sp) * dt * e.spd);
     };
     e.phase += dt * (e.type === 'crawler' || e.type === 'bomber' ? 14 : 7);
-    m.position.y = Math.abs(Math.sin(e.phase)) * 0.12;
+    m.position.y = m.userData.bot ? 0 : Math.abs(Math.sin(e.phase)) * 0.12;
     m.rotation.y = Math.atan2(-dir.x, -dir.z);
 
     if (e.type === 'spitter') {
@@ -2191,13 +2331,13 @@ function updateEnemies(dt) {
       e.shootCd -= dt;
       if (e.shootCd <= 0 && dist < 38) {
         e.shootCd = rand(1.8, 3);
-        const from = m.position.clone().setY(1.5);
+        const from = m.position.clone().setY(curFaction === 'bots' ? 1.15 : 1.5);
         spitAt(from, tg.pos.clone().add(new THREE.Vector3(0, 1.1, 0)).sub(from), 18, e.t.dmg * e.dm, false);
         beep(240, 0.12, 0.05);
       }
     } else if (e.type === 'bomber') {
       walkTo(e.t.speed);
-      const s = 1 + 0.1 * Math.sin(e.phase * 2); m.scale.setScalar(s);
+      const s = 1 + 0.1 * Math.sin(e.phase * 2); m.scale.setScalar(e.t.scale * s);
       if (dist < 2.2) killEnemy(e);                      // explode ao chegar perto
     } else if (e.type === 'charger') {
       e.stT -= dt;
@@ -2224,7 +2364,7 @@ function updateEnemies(dt) {
       if (dist <= 6.5 && e.atkCd <= 0) { e.atkCd = enraged ? 1.3 : 1.8; hurt(e.t.dmg); burst(m.position.clone().setY(1.5), 0xff40c0, 12, 5); shake = Math.max(shake, 0.2); }
       if (e.volleyCd <= 0 && dist > 9) {
         e.volleyCd = enraged ? 3 : 4.5;
-        const from = m.position.clone().setY(2.6);
+        const from = m.position.clone().setY(curFaction === 'bots' ? 3.3 : 2.6);
         const base = tg.pos.clone().add(new THREE.Vector3(0, 1.1, 0)).sub(from);
         for (let i = -2; i <= 2; i++) {
           const v = base.clone(); const c = Math.cos(i * 0.16), sn = Math.sin(i * 0.16);
@@ -2252,6 +2392,7 @@ function updateEnemies(dt) {
     }
     resolveRocks(m.position, e.t.radius * 0.6);
   }
+  animateBots(dt);
 }
 
 function updateProjectiles(dt) {
@@ -2357,7 +2498,7 @@ function updateHud() {
   $('hpBar').style.background = pct > 50 ? '#4cd68a' : pct > 25 ? '#ffcf3f' : '#ff4d4d';
   $('wname').textContent = `[${player.weapon + 1}] ${curW().name}`;
   $('ammo').innerHTML = (player.reloading > 0 ? 'Recarregando' : player.mag) + ` <small>/ ${player.reserve}</small>`;
-  $('oText').textContent = state === 'downed' ? 'Você caiu. Aguarde um aliado ou o fim da operação.' : mission.text;
+  $('oText').textContent = state === 'downed' ? 'Você caiu. Aguarde um aliado ou o fim da operação.' : FT(mission.text);
   $('oBar').style.width = Math.min(100, mission.progress * 100) + '%';
   const sup = player.supplyCd > 0 ? `${Math.ceil(player.supplyCd)}s` : 'pronto';
   const orb = player.strikeCd > 0 ? `${Math.ceil(player.strikeCd)}s` : 'pronto';
@@ -2489,7 +2630,7 @@ function netHost(dt) {
 }
 
 function createEnemyProxy(a) {
-  const type = TYPE_LIST[a[1]], t = ENEMY_TYPES[type], mesh = makeEnemyMesh(type);
+  const type = TYPE_LIST[a[1]], t = ET()[type], mesh = makeEnemyMesh(type);
   const elite = !!(a[6] & 1);
   if (elite) { mesh.scale.multiplyScalar(1.25); mesh.traverse(o => { if (o.isMesh && o.material.emissive) o.material.emissive.set(0x7a3a00); }); }
   mesh.position.set(a[2], 0, a[3]); mesh.rotation.y = a[4];
@@ -2499,7 +2640,7 @@ function createEnemyProxy(a) {
   return e;
 }
 function removeEnemyProxy(e, fx) {
-  if (fx) burst(e.mesh.position.clone().setY(e.t.height), e.type === 'spitter' ? 0xa4ff6a : 0xc23b2a, e.type === 'brute' || e.type === 'queen' ? 40 : 14, 6);
+  if (fx) burst(e.mesh.position.clone().setY(e.t.height), deathColor(e), e.type === 'brute' || e.type === 'queen' ? 40 : 14, 6);
   scene.remove(e.mesh); enemyById.delete(e.id);
   const i = enemies.indexOf(e); if (i >= 0) enemies.splice(i, 1);
 }
@@ -2574,10 +2715,11 @@ function updateClientWorld(dt) {
     m.position.x += (e.tx - m.position.x) * k; m.position.z += (e.tz - m.position.z) * k;
     let dr = e.tr - m.rotation.y; dr = Math.atan2(Math.sin(dr), Math.cos(dr)); m.rotation.y += dr * k;
     e.phase += dt * (e.type === 'crawler' || e.type === 'bomber' ? 14 : 7);
-    m.position.y = Math.abs(Math.sin(e.phase)) * 0.12;
-    if (e.type === 'bomber') m.scale.setScalar(1 + 0.1 * Math.sin(e.phase * 2));
+    m.position.y = m.userData.bot ? 0 : Math.abs(Math.sin(e.phase)) * 0.12;
+    if (e.type === 'bomber') m.scale.setScalar(e.t.scale * (1 + 0.1 * Math.sin(e.phase * 2)));
     else if (e.type === 'charger' && e.st === 'wind') m.scale.setScalar(e.t.scale * (1 + 0.04 * Math.sin(e.phase * 8)));
   }
+  animateBots(dt);
   for (const p of projectiles) if (p.tp) p.m.position.lerp(p.tp, k);
   if (generator && generator.active) generator.core.material.emissive.set(generator.hp / generator.max < 0.3 ? 0xaa4422 : 0x2290c0);
   for (const p of pods) if (!p.got) { p.cap.rotation.y = elapsed * 2; p.cap.position.y = 1.0 + 0.15 * Math.sin(elapsed * 3); }
@@ -2642,6 +2784,8 @@ function clientStartMission(d) {
   ensureAudio();
   if (missionBusy()) { clearWorld(); }
   relax = !!d.relax;
+  curFaction = d.faction === 'bots' ? 'bots' : 'bugs';
+  if (curFaction === 'bots') loadBots().catch(() => {});
   clearWorld();
   applyBiome(d.biome);
   opLayout = null;
@@ -2834,7 +2978,7 @@ loop();
 
 // Gancho para testes automatizados e futuro multiplayer (estado serializável)
 window.__freedivers = window.__multipunk = {
-  player, keys, tick, startMission,
+  player, keys, tick, startMission, setFaction, settings, get curFaction() { return curFaction; }, loadBots, botsReady,
   get enemies() { return enemies; }, get state() { return state; }, get kills() { return kills; },
   get mission() { return mission; }, setMouse(v) { mouseDown = v; },
   get camPos() { return camPos; }, get rocks() { return rocks; }, get generator() { return generator; }, get strikes() { return strikes; }, switchWeapon, callStrike, spawnEnemy, damageEnemy, get pods() { return pods; }, endMission, get save() { return save; }, get level() { return level; }, get mods() { return mods; }, addXp, get platoons() { return platoons; }, get plane() { return plane; }, get opLayout() { return opLayout; }, get stats() { return stats; }, get xpNeed() { return xpNeed; }, respawnPlayer, abortMission, computeScore, get checkpoint() { return checkpoint; }, get loadedVersion() { return net.version; }, checkVersion, get newVersion() { return newVersion; }, updateModalTick, net, others, get enemyById() { return enemyById; }, get crates() { return crates; }, get drops() { return drops; }, get turrets() { return turrets; }, get uiOpen() { return uiOpen; }, buildSnapshot, applySnapshot, killsBy: () => killsBy, set stateX(v) { state = v; }, get wts() { return wts; }, damage: n => damagePlayer(n), get beacons() { return beacons; }, get pad() { return pad; },
