@@ -20,6 +20,23 @@ HOST=127.0.0.1 node server.js     # abre em http://127.0.0.1:8765
 O host roda o mundo (inimigos, pelotões, ondas); cada jogador controla o próprio personagem. A sala fecha para novos jogadores
 enquanto a operação está em andamento. Na operação, o grupo compartilha os 3 reforços e **todos** precisam embarcar na nave.
 
+## Contas, mundo compartilhado e banco (Neon)
+Com `DATABASE_URL` definida o servidor liga **login obrigatório** (usuário, senha e confirmar senha) e a **campanha única para todos os jogadores**:
+cada quadrado do mapa tem a porcentagem de domínio de humanos, insetos e robôs, mostrada ao vivo para todos; vencer uma operação aumenta a % dos humanos
+(mais com nível de ameaça alto e mais jogadores) e, de tempos em tempos, as facções brigam entre si e contra os humanos. Sem `DATABASE_URL` o jogo roda
+local, sem contas, com a campanha salva no navegador (como no `Jogar.bat`).
+- **Banco:** rode `deploy/schema.sql` uma vez no SQL Editor do Neon (já foi aplicado no projeto *MultiPunk*). Tabelas: `users`, `sessions`, `world_sectors`,
+  `world_meta`, `world_events`, `battles`, `battle_members`, `contributions`.
+- **Variáveis:** copie `deploy/.env.example` para `.env` na VPS (`chmod 600`) e preencha `DATABASE_URL` (conexão *pooled* do Neon, `sslmode=verify-full`),
+  `TRUST_PROXY=1` atrás de nginx/Caddy e `ALLOWED_ORIGINS=https://seu-dominio`. O systemd já lê esse arquivo (`EnvironmentFile`).
+- **Segurança:** senhas com bcrypt (custo 12, 8 a 72 caracteres) · sessão em cookie HttpOnly + SameSite=Strict (+ Secure em HTTPS), token de 256 bits e só o hash no banco ·
+  limite de tentativas por IP e por usuário, bloqueio de 15 min após 5 erros, 5 cadastros por IP/hora, corpo máximo de 2 KB e tempo limite nas requisições ·
+  checagem de Origin em todo POST e no WebSocket · uma conexão por conta · cabeçalhos de segurança (CSP, nosniff, frame-ancestors none, HSTS atrás de HTTPS) · SQL sempre parametrizado.
+- **Antifraude:** o servidor só aceita atacar quadrados atacáveis e níveis permitidos, reserva a batalha ao começar e descarta vitórias mais rápidas que `MIN_WIN_SECONDS` (60 s).
+  O combate em si é decidido pelo host da sala, então um host malicioso ainda poderia mentir: é o limite de um jogo cooperativo sem servidor de simulação.
+- **Dificuldade por jogadores:** vida, quantidade e dano dos inimigos crescem com o número de jogadores da sessão (invisível no jogo).
+- Testes: `npm test` (salas e contas/limites/mundo, usando banco em memória, sem tocar no Neon).
+
 ## Hospedar na sua VPS
 Requisitos: Node.js 18+ e uma porta aberta (ou nginx na frente).
 
@@ -35,7 +52,7 @@ PORT=8765 node server.js            # escuta em 0.0.0.0 (use HOST=127.0.0.1 atr�
 - **Validador de versão:** a versão é o hash dos arquivos do jogo (muda sozinha ao atualizar o código na VPS; `/version.json`). O
   navegador confere a cada 30 s: se saiu versão nova, abre um modal pedindo para atualizar a página, **só para quem está no menu
   principal** — quem está em partida (ou pausado nela) nunca é interrompido. Quem está com versão antiga não entra em sala de versão nova.
-- `node tools/test_relay.js` testa as regras das salas (código, limite de 4, sala travada, saída do host).
+- `node tools/test_relay.js` (salas) e `node tools/test_auth.js` (contas e mundo) testam as regras das salas (código, limite de 4, sala travada, saída do host).
 
 ## Menu e facções
 O menu principal tem **Novo jogo · Modo online · Configurações · Controles**. Em *Novo jogo* você escolhe a **facção inimiga** e a operação

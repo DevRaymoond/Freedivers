@@ -1,16 +1,20 @@
-// Servidor do Multipunk: serve o jogo (arquivos estáticos) e faz o relé WebSocket das salas.
-//   Salas: o host cria uma sala e recebe um CÓDIGO; só quem digitar o código entra (máx. 4 jogadores).
-//   O servidor não simula nada: apenas repassa mensagens entre o host e os clientes.
+// Servidor do Multipunk: serve o jogo (arquivos estáticos), contas (login/senha), mundo compartilhado da campanha e o relé WebSocket das salas.
+//   Salas: o host cria uma sala e recebe um CÓDIGO; só quem digitar o código entra (máx. 4 jogadores). O servidor não simula combate.
+//   Contas e mundo: com DATABASE_URL (Neon/PostgreSQL) o login é obrigatório e a campanha é uma só para todos os jogadores.
+//   Sem DATABASE_URL o jogo roda local, sem contas, com a campanha salva no navegador.
 //
 //   Uso:  npm install && node server.js
-//   Variáveis: PORT (padrão 8765), HOST (padrão 0.0.0.0; use 127.0.0.1 para jogo local), DEV=1 (libera /tools),
-//              ALLOWED_ORIGINS (lista separada por vírgula; vazio = qualquer origem)
+//   Variáveis (veja deploy/.env.example): PORT, HOST, DATABASE_URL, TRUST_PROXY, ALLOWED_ORIGINS, DEV, BCRYPT_COST, SESSION_DAYS, WAR_TICK_MIN
+try { process.loadEnvFile && require('fs').existsSync('.env') && process.loadEnvFile('.env'); } catch { /* sem .env */ }
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
+const { createStore } = require('./store');
+const { createAuth, clientIp, limiter } = require('./auth');
+const { createWorld } = require('./world');
 
 const root = __dirname;
 const port = Number(process.env.PORT) || 8765;
@@ -19,19 +23,24 @@ const DEV = !!process.env.DEV;
 const origins = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
 const MAX_PLAYERS = 4;
 
-// ───────────── arquivos estáticos (lista permitida: nada de node_modules, .git, server.js…) ─────────────
+// ───────────── arquivos estáticos (lista permitida: nada de node_modules, .git, server.js, .env…) ─────────────
 const types = {
-  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css',
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css',
   '.png': 'image/png', '.json': 'application/json', '.glb': 'model/gltf-binary', '.ico': 'image/x-icon', '.webp': 'image/webp', '.jpg': 'image/jpeg',
 };
-const allowed = p => /^\/(index\.html|main\.js|net\.js|cursor\.js|bots\.js|favicon\.ico)$/.test(p) || /^\/(lib|assets)\/[\w./-]+$/.test(p) || (DEV && /^\/tools\/[\w./-]+$/.test(p));
+const allowed = p => /^\/(index\.html|main\.js|net\.js|cursor\.js|bots\.js|worldlogic\.mjs|favicon\.ico)$/.test(p) || /^\/(lib|assets)\/[\w./-]+$/.test(p) || (DEV && /^\/tools\/[\w./-]+$/.test(p));
 const gzCache = new Map();
+const SEC_HEADERS = {
+  'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
+  'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' blob: data: ws: wss:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+};
 function sendFile(req, res, file) {
   fs.stat(file, (err, st) => {
     if (err || !st.isFile()) { res.writeHead(404); return res.end('404'); }
     const ext = path.extname(file);
     const headers = { 'Content-Type': types[ext] || 'application/octet-stream', 'Cache-Control': /^\/(lib|assets)\//.test(file.slice(root.length).replace(/\\/g, '/')) ? 'public, max-age=3600' : 'no-cache' };
-    const compressible = ['.html', '.js', '.json', '.glb'].includes(ext) && /\bgzip\b/.test(req.headers['accept-encoding'] || '');
+    const compressible = ['.html', '.js', '.mjs', '.json', '.glb'].includes(ext) && /\bgzip\b/.test(req.headers['accept-encoding'] || '');
     if (!compressible) { res.writeHead(200, headers); return fs.createReadStream(file).pipe(res); }
     const key = file + st.mtimeMs;
     const done = gz => { res.writeHead(200, { ...headers, 'Content-Encoding': 'gzip', 'Content-Length': gz.length }); res.end(gz); };
@@ -40,7 +49,7 @@ function sendFile(req, res, file) {
   });
 }
 // Versão = hash do conteúdo dos arquivos do jogo. Muda sozinha quando você atualiza o código na VPS.
-const APP_FILES = ['index.html', 'main.js', 'net.js', 'cursor.js', 'bots.js', 'assets/character.glb', 'assets/robot.glb', 'assets/world.json', 'assets/worldmap.jpg'];
+const APP_FILES = ['index.html', 'main.js', 'net.js', 'cursor.js', 'bots.js', 'worldlogic.mjs', 'assets/character.glb', 'assets/robot.glb', 'assets/world.json', 'assets/worldmap.jpg'];
 let verCache = { sig: '', hash: 'dev' };
 function appVersion() {
   let sig = '';
@@ -61,21 +70,35 @@ function sendIndex(req, res) {
     else { res.writeHead(200, headers); res.end(body); }
   });
 }
+
+// ───────────── contas e mundo (só com banco) ─────────────
+const store = createStore();
+let auth = null, world = null;
+const authOn = () => !!auth;
+
 const server = http.createServer((req, res) => {
-  let p = decodeURIComponent((req.url || '/').split('?')[0]);
+  for (const [k, v] of Object.entries(SEC_HEADERS)) res.setHeader(k, v);
+  if (process.env.TRUST_PROXY === '1' && req.headers['x-forwarded-proto'] === 'https') res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+  let p; try { p = decodeURIComponent((req.url || '/').split('?')[0]); } catch { res.writeHead(400); return res.end(); }
+  if (p.startsWith('/api/')) {
+    if (auth) return void auth.handle(req, res, p);
+    if (p === '/api/config') { res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); return res.end('{"auth":false}'); }
+    res.writeHead(404); return res.end('404');
+  }
   if (p === '/' || p === '/index.html') return sendIndex(req, res);
   if (p === '/version.json') { res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); return res.end(JSON.stringify({ version: appVersion() })); }
   if (p === '/health') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('ok'); }
   if (p.includes('..') || !allowed(p)) { res.writeHead(404); return res.end('404'); }
   sendFile(req, res, path.join(root, p));
 });
+server.headersTimeout = 15000; server.requestTimeout = 30000; server.keepAliveTimeout = 5000; server.maxHeadersCount = 60;
 
 // ───────────── salas ─────────────
 const rooms = new Map();        // código -> { code, host, clients: Map(id -> ws), locked }
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 function newCode() {
   for (let n = 0; n < 50; n++) {
-    let c = ''; for (let i = 0; i < 5; i++) c += ALPHABET[Math.floor(Math.random() * ALPHABET.length)];
+    let c = ''; for (let i = 0; i < 5; i++) c += ALPHABET[crypto.randomInt(ALPHABET.length)];
     if (!rooms.has(c)) return c;
   }
   return null;
@@ -104,13 +127,40 @@ function leave(ws) {
     broadcastRoster(room);
   }
 }
+const roomUserIds = room => [room.host, ...room.clients.values()].map(w => w.meta.user && w.meta.user.id).filter(Boolean);
 
-const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 64 * 1024 });
-wss.on('connection', (ws, req) => {
-  if (origins.length && !origins.includes(req.headers.origin || '')) return ws.close(1008, 'origem não permitida');
-  ws.meta = { id: 0, name: 'Jogador', room: null, count: 0, t0: Date.now() };
+// ───────────── WebSocket (autenticado quando há banco) ─────────────
+const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
+const socketsByUser = new Map(), socketsByIp = new Map();
+function reject(socket, code, msg) { socket.write(`HTTP/1.1 ${code} ${msg}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`); socket.destroy(); }
+server.on('upgrade', async (req, socket, head) => {
+  socket.on('error', () => {});
+  if (!/^\/ws(\?|$)/.test(req.url || '')) return reject(socket, 404, 'Not Found');
+  const o = req.headers.origin;
+  if (origins.length ? !origins.includes(o || '') : (o && (() => { try { return new URL(o).host !== req.headers.host; } catch { return true; } })())) return reject(socket, 403, 'Forbidden');
+  const ip = clientIp(req);
+  if (limiter.hit(`ws:${ip}`, 30, 60000)) return reject(socket, 429, 'Too Many Requests');
+  if ((socketsByIp.get(ip) || 0) >= 8) return reject(socket, 429, 'Too Many Requests');
+  let user = null;
+  if (auth) {
+    try { const s = await auth.sessionOf(req); if (!s) return reject(socket, 401, 'Unauthorized'); user = { id: s.userId, name: s.username }; }
+    catch (e) { console.error('[ws] sessão:', e.message); return reject(socket, 503, 'Service Unavailable'); }
+  }
+  wss.handleUpgrade(req, socket, head, ws => { ws.ip = ip; ws.user = user; wss.emit('connection', ws, req); });
+});
+
+wss.on('connection', ws => {
+  const user = ws.user;
+  ws.meta = { id: 0, name: user ? user.name : 'Jogador', user, room: null, count: 0, t0: Date.now(), battle: null, lastCamp: 0 };
   ws.alive = true;
+  socketsByIp.set(ws.ip, (socketsByIp.get(ws.ip) || 0) + 1);
+  if (user) {                                                       // um login = uma conexão: a mais nova derruba a antiga
+    const old = socketsByUser.get(user.id); if (old && old !== ws) { send(old, { t: 'kicked' }); old.close(4000, 'outra sessão'); }
+    socketsByUser.set(user.id, ws);
+  }
   ws.on('pong', () => { ws.alive = true; });
+  if (user && world) send(ws, { t: 'hello', user, world: world.snapshot() }); else send(ws, { t: 'hello', user: null });
+
   ws.on('message', raw => {
     // limite simples de mensagens por segundo
     const now = Date.now();
@@ -124,23 +174,26 @@ wss.on('connection', (ws, req) => {
       leave(ws);
       const code = newCode();
       if (!code) return send(ws, { t: 'err', msg: 'Servidor cheio. Tente de novo.' });
-      meta.name = cleanName(m.name); meta.id = 1;
+      meta.name = user ? user.name : cleanName(m.name); meta.id = 1;
       const room = { code, host: ws, clients: new Map(), locked: false, version: String(m.ver || '') };
       rooms.set(code, room); meta.room = room;
       send(ws, { t: 'hosted', code, id: 1 });
       broadcastRoster(room);
     } else if (m.t === 'join') {
       leave(ws);
+      if (limiter.hit(`join:${ws.ip}`, 20, 60000)) return send(ws, { t: 'err', msg: 'Muitas tentativas. Aguarde um minuto.' });   // contra adivinhar códigos
       const room = rooms.get(String(m.code || '').toUpperCase().trim());
       if (!room) return send(ws, { t: 'err', msg: 'Código inválido ou sala encerrada.' });
       if (room.version && m.ver && room.version !== String(m.ver)) return send(ws, { t: 'err', msg: 'Seu jogo está em outra versão. Atualize a página (F5) e tente de novo.' });
       if (room.locked) return send(ws, { t: 'err', msg: 'Essa sala já iniciou a operação.' });
       if (room.clients.size + 1 >= MAX_PLAYERS) return send(ws, { t: 'err', msg: 'Sala cheia (máx. 4 jogadores).' });
       let id = 2; while (room.clients.has(id)) id++;
-      meta.name = cleanName(m.name); meta.id = id; meta.room = room;
+      meta.name = user ? user.name : cleanName(m.name); meta.id = id; meta.room = room;
       room.clients.set(id, ws);
       send(ws, { t: 'joined', code: room.code, id, hostId: 1 });
       broadcastRoster(room);
+    } else if (m.t === 'leave') {
+      leave(ws);
     } else if (m.t === 'lock' && meta.room && meta.room.host === ws) {
       meta.room.locked = !!m.locked; broadcastRoster(meta.room);
     } else if (m.t === 'to' && meta.room) {
@@ -150,13 +203,45 @@ wss.on('connection', (ws, req) => {
         if (m.to === 'all') { for (const c of room.clients.values()) if (c.readyState === 1) c.send(out); }
         else { const c = room.clients.get(Number(m.to)); if (c && c.readyState === 1) c.send(out); }
       } else if (room.host.readyState === 1) room.host.send(out);        // clientes só falam com o host
+    } else if (m.t === 'campStart' && world && user) {
+      // reserva a batalha no servidor: só quem é host (ou joga sozinho) abre; o servidor decide se o setor pode ser atacado
+      if (meta.room && meta.room.host !== ws) return send(ws, { t: 'campErr', msg: 'Só o host inicia operações.' });
+      if (now - meta.lastCamp < 3000) return send(ws, { t: 'campErr', msg: 'Calma: aguarde alguns segundos.' });
+      meta.lastCamp = now; meta.battle = null;
+      const members = meta.room ? roomUserIds(meta.room) : [user.id];
+      world.startBattle({ userId: user.id }, { key: String(m.key || '').slice(0, 8), level: m.level, party: members.length, members })
+        .then(b => { if (b.error) return send(ws, { t: 'campErr', msg: b.error }); meta.battle = b; send(ws, { t: 'campOk', id: b.id, faction: b.faction, level: b.level, party: b.party }); })
+        .catch(e => { console.error('[camp]', e.message); send(ws, { t: 'campErr', msg: 'Erro no servidor. Tente de novo.' }); });
+    } else if (m.t === 'campEnd' && world && user && meta.battle) {
+      const b = meta.battle; meta.battle = null;
+      if (meta.room) b.members = roomUserIds(meta.room);
+      world.endBattle(b, !!m.win && !m.abort).then(r => send(ws, { t: 'campDone', ...r })).catch(e => console.error('[camp]', e.message));
     } else if (m.t === 'ping') send(ws, { t: 'pong', n: m.n });
   });
-  ws.on('close', () => leave(ws));
-  ws.on('error', () => leave(ws));
+  const gone = () => {
+    leave(ws);
+    if (ws.dropped) return; ws.dropped = true;
+    socketsByIp.set(ws.ip, Math.max(0, (socketsByIp.get(ws.ip) || 1) - 1));
+    if (user && socketsByUser.get(user.id) === ws) socketsByUser.delete(user.id);
+  };
+  ws.on('close', gone); ws.on('error', gone);
 });
 setInterval(() => {
   for (const ws of wss.clients) { if (!ws.alive) { ws.terminate(); continue; } ws.alive = false; try { ws.ping(); } catch { /* ignora */ } }
 }, 20000);
 
-server.listen(port, bindHost, () => console.log(`Multipunk em http://${bindHost === '0.0.0.0' ? 'localhost' : bindHost}:${port}  (WebSocket em /ws)`));
+function broadcastWorld(d) {
+  const msg = JSON.stringify({ t: 'world', d });
+  for (const ws of wss.clients) if (ws.readyState === 1 && ws.meta && ws.meta.user) ws.send(msg);
+}
+
+(async () => {
+  if (store) {
+    await store.init();
+    auth = createAuth(store, { origins });
+    world = await createWorld(store, broadcastWorld);
+    setInterval(() => store.purgeSessions().catch(() => {}), 3600000).unref();
+    console.log(`Contas e mundo compartilhado ativos (${store.kind}).`);
+  } else console.log('Sem DATABASE_URL: jogo local, sem contas (campanha salva no navegador).');
+  server.listen(port, bindHost, () => console.log(`Multipunk em http://${bindHost === '0.0.0.0' ? 'localhost' : bindHost}:${port}  (WebSocket em /ws)`));
+})().catch(e => { console.error('Falha ao iniciar:', e.message); process.exit(1); });

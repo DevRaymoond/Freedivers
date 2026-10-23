@@ -7,6 +7,8 @@ After=network.target
 Type=simple
 WorkingDirectory=/opt/multipunk
 Environment=NODE_ENV=production
+# segredos (DATABASE_URL etc.) ficam fora do repositório: chmod 600 /opt/multipunk/.env
+EnvironmentFile=/opt/multipunk/.env
 Environment=PORT=8765
 # Atrás do nginx, escute só em localhost; sem proxy, use 0.0.0.0
 Environment=HOST=127.0.0.1

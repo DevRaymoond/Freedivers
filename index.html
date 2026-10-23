@@ -322,6 +322,22 @@
   .camp-log { max-height: 150px; overflow: auto; font-size: 12px; color: #b8c4d2; line-height: 1.5; } .camp-log i { font-style: normal; font-family: var(--mono); color: var(--accent); margin-right: 6px; }
   @media (max-width: 900px) { .camp { grid-template-columns: 1fr; } }
   @media (max-height: 520px) and (min-width: 700px) { .camp { grid-template-columns: minmax(240px, 330px) 1fr; } }
+
+  /* ───────── Login ───────── */
+  #auth { position: fixed; inset: 0; z-index: 85; display: none; align-items: center; justify-content: center; background: radial-gradient(ellipse at 30% 20%, #1b2634, #05070a 70%); overflow: auto; padding: 16px; }
+  #auth.on { display: flex; }
+  .auth-card { width: min(400px, 100%); display: flex; flex-direction: column; gap: 12px; padding: 26px 28px; background: var(--panel2); border: 1px solid var(--line2); clip-path: var(--clip); }
+  .auth-logo { display: flex; align-items: center; gap: 4px; font-size: 26px; letter-spacing: 7px; font-weight: 700; } .auth-logo b { color: var(--accent); }
+  .auth-logo .mark { width: 24px; height: 24px; background: var(--accent); clip-path: polygon(50% 0, 100% 100%, 50% 72%, 0 100%); margin-right: 10px; }
+  .atabs { display: flex; border-bottom: 1px solid var(--line); } .atab { flex: 1; background: transparent; border: 0; color: var(--dim); font: inherit; letter-spacing: 3px; font-size: 13px; padding: 10px; border-bottom: 2px solid transparent; text-transform: uppercase; }
+  .atab.on { color: var(--text); border-bottom-color: var(--accent); }
+  .auth-card label { display: flex; flex-direction: column; gap: 6px; font-size: 11px; letter-spacing: 3px; color: var(--dim); text-transform: uppercase; }
+  .auth-card .field { letter-spacing: 1px; font-size: 15px; }
+  .auth-card small { color: var(--dim); line-height: 1.5; font-size: 11px; }
+  .onlinemsg.err { color: var(--danger); }
+  .who { display: flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: 12px; letter-spacing: 1px; color: var(--accent); }
+  .who button { background: transparent; border: 1px solid var(--line2); color: var(--dim); font: inherit; font-size: 11px; padding: 4px 10px; letter-spacing: 2px; }
+  .who button:hover { color: var(--text); border-color: var(--accent); }
 </style>
 </head>
 <body>
@@ -362,6 +378,7 @@
   <header class="topbar">
     <div class="logo" id="logoHome" style="cursor:pointer"><span class="mark"></span><div><b>MULTI</b>PUNK<small>COOP ONLINE · SOLO · FORÇA DE INTERVENÇÃO</small></div></div>
     <nav id="tabs"></nav>
+    <div class="who" id="who" style="display:none"><span id="whoName"></span><button id="logout" title="Sair da conta">Sair</button></div>
     <div class="wallet"><span>CRÉDITOS</span><b id="credits">0</b></div>
   </header>
   <main id="view"></main>
@@ -382,6 +399,16 @@
   <button class="btn primary" id="resBtn">Voltar ao menu</button>
 </div></div>
 
+<div id="auth"><form class="auth-card" id="authForm" autocomplete="on">
+  <div class="auth-logo"><span class="mark"></span><b>MULTI</b>PUNK</div>
+  <div class="atabs"><button type="button" class="atab on" data-mode="login">Entrar</button><button type="button" class="atab" data-mode="register">Criar conta</button></div>
+  <label>Usuário<input class="field" id="authUser" name="username" maxlength="20" autocomplete="username" autocapitalize="none" spellcheck="false" required placeholder="3 a 20 letras, números ou _"></label>
+  <label>Senha<input class="field" id="authPass" name="password" type="password" maxlength="100" autocomplete="current-password" required placeholder="mínimo de 8 caracteres"></label>
+  <label id="authConfirmRow" style="display:none">Confirmar senha<input class="field" id="authConfirm" name="confirm" type="password" maxlength="100" autocomplete="new-password" placeholder="repita a senha"></label>
+  <button class="btn primary" id="authGo" type="submit">Entrar</button>
+  <div id="authMsg" class="onlinemsg"></div>
+  <small>O mapa da guerra é compartilhado por todos os jogadores. Só guardamos o usuário e a senha (criptografada com bcrypt).</small>
+</form></div>
 <div id="updateModal"><div class="upd-card">
   <small>NOVA VERSÃO</small><h3>Atualização disponível</h3>
   <p id="updText">Saiu uma versão nova do Multipunk. Atualize a página para jogar com as novidades.</p>

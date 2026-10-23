@@ -8,11 +8,14 @@
   },
   "scripts": {
     "start": "node server.js",
-    "local": "HOST=127.0.0.1 node server.js"
+    "local": "HOST=127.0.0.1 node server.js",
+    "test": "node tools/test_relay.js && node tools/test_auth.js"
   },
   "keywords": [],
   "type": "commonjs",
   "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "pg": "^8.23.1",
     "ws": "^8.22.0"
   },
   "devDependencies": {

@@ -14,11 +14,18 @@ export const net = {
   onRoster: null,      // () => void
   onLeft: null,        // (id) => void           (host: um cliente saiu)
   onClosed: null,      // (motivo) => void       (cliente: o host saiu / conexão caiu)
+  user: null,          // { id, name } quando o servidor tem contas
+  persist: false,      // mantém a conexão aberta (e reconecta) enquanto a pessoa está logada
+  onWorld: null,       // (dados, completo) => void   mundo compartilhado da campanha
+  onCamp: null,        // (msg) => void               campOk / campErr / campDone
+  onConn: null,        // (conectado) => void
+  onKicked: null,      // () => void                  login aberto em outro lugar
 };
 
 let ws = null;
 let waiter = null;       // espera pela resposta do servidor a 'host' / 'join'
 let pingTimer = null;
+let retryT = null, retryN = 0;
 
 function wsUrl() { return `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`; }
 
@@ -28,7 +35,7 @@ function open() {
     try { ws = new WebSocket(wsUrl()); } catch (e) { return reject(new Error('Servidor indisponível.')); }
     const sock = ws;
     sock.onopen = () => {
-      net.connected = true;
+      net.connected = true; retryN = 0; net.onConn && net.onConn(true);
       clearInterval(pingTimer);
       pingTimer = setInterval(() => { net.t0 = performance.now(); send({ t: 'ping', n: 1 }); }, 4000);
       resolve();
@@ -38,7 +45,11 @@ function open() {
       const was = net.role;
       net.connected = false; clearInterval(pingTimer);
       if (waiter) { waiter.reject(new Error('Conexão encerrada.')); waiter = null; }
-      if (sock === ws) { ws = null; if (was !== 'solo') { reset(); net.onClosed && net.onClosed('Conexão com o servidor perdida.'); } }
+      if (sock === ws) {
+        ws = null; net.onConn && net.onConn(false);
+        if (was !== 'solo') { reset(); net.onClosed && net.onClosed('Conexão com o servidor perdida.'); }
+        if (net.persist && !net.kicked) { clearTimeout(retryT); retryT = setTimeout(() => open().catch(() => {}), Math.min(15000, 1500 * 2 ** retryN++)); }
+      }
     };
     sock.onmessage = ev => {
       let m; try { m = JSON.parse(ev.data); } catch { return; }
@@ -49,7 +60,11 @@ function open() {
         case 'players': net.roster = m.players; net.locked = !!m.locked; net.onRoster && net.onRoster(); break;
         case 'm': net.onMessage && net.onMessage(m.from, m.d); break;
         case 'left': net.onLeft && net.onLeft(m.id); break;
-        case 'closed': { reset(); const s = ws; ws = null; try { s && s.close(); } catch { /* ok */ } net.onClosed && net.onClosed('O host encerrou a sala.'); break; }
+        case 'closed': reset(); net.onClosed && net.onClosed('O host encerrou a sala.'); break;
+        case 'hello': net.user = m.user || null; if (m.world) net.onWorld && net.onWorld(m.world, true); break;
+        case 'world': net.onWorld && net.onWorld(m.d, !!m.d.reset); break;
+        case 'campOk': case 'campErr': case 'campDone': net.onCamp && net.onCamp(m); break;
+        case 'kicked': net.kicked = true; net.onKicked && net.onKicked(); break;
         case 'pong': net.rtt = Math.round(performance.now() - (net.t0 || performance.now())); break;
       }
     };
@@ -63,7 +78,11 @@ function ask(msg) {
 
 net.host = async name => { await open(); return ask({ t: 'host', name, ver: net.version }); };
 net.join = async (code, name) => { await open(); return ask({ t: 'join', code, name, ver: net.version }); };
-net.leave = () => { const s = ws; ws = null; reset(); try { s && s.close(); } catch { /* ok */ } };
+net.leave = () => { send({ t: 'leave' }); reset(); };           // sai da sala mas mantém a conexão (login e mundo) aberta
+net.connect = () => { net.persist = true; net.kicked = false; return open(); };
+net.disconnect = () => { net.persist = false; clearTimeout(retryT); const s = ws; ws = null; reset(); net.user = null; try { s && s.close(); } catch { /* ok */ } };
+net.campStart = (key, level) => send({ t: 'campStart', key, level });
+net.campEnd = (win, abort) => send({ t: 'campEnd', win: !!win, abort: !!abort });
 net.lock = locked => { send({ t: 'lock', locked }); };
 net.toHost = d => send({ t: 'to', to: 'host', d });          // cliente → host
 net.to = (id, d) => send({ t: 'to', to: id, d });             // host → um cliente

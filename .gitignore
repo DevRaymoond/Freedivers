@@ -5,3 +5,9 @@ tools/__pycache__/
 tools/source/
 tools/*.png
 assets/*_preview.png
+
+# segredos e dados locais
+.env
+.env.*
+!.env.example
+deploy/.env
