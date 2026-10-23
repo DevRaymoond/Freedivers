@@ -26,6 +26,12 @@ enquanto a operação está em andamento. Na operação, o grupo compartilha os 
   jogando naquele setor, se houver vaga (até 4). O host escolhe quem pode entrar: **Aberto**, **Só amigos** ou **Fechado**; dá para entrar com a operação em andamento.
 - **Amigos:** enviar e aceitar/recusar/cancelar pedido, remover, **bloquear/desbloquear**, ver quem está online e em qual setor, **convidar** para o esquadrão (convite vale 60 s) e
   entrar no esquadrão de um amigo. Bloqueado não pede amizade, não convida nem entra nos seus esquadrões. Tabelas `friendships` e `blocks`.
+- **Mapa (Novo jogo → MAPA):** mostra o mapa do mundo online somente para ver, sem login (`GET /api/world`, público e com limite de taxa). Cada setor mostra a **liberação**
+  em destaque: número grande, barra até os 50% e quanto falta (com a contribuição da missão escolhida). A porcentagem também aparece escrita nas células do mapa, no HUD
+  da missão ("SETOR K16 · liberação 7,05% de 50,00% · vitória +7,05%") e na tela de resultado.
+- **Amizades (Modo online → AMIZADES):** adicionar, pedidos, bloquear, convidar, **jogados recentemente** e **chat** (com amigos online e com o esquadrão). O Multipunk só repassa a
+  mensagem em memória (até 300 caracteres, limite de 30 por minuto): **não grava conversa nem dados**. O histórico e a lista de recentes ficam só em `localStorage` do seu aparelho
+  e dá para apagar. Mensagem para amigo offline não é entregue.
 - **Progresso do setor:** cada missão vale um progresso base e **cada nível de ameaça soma +1**; **1 ponto = 0,01%** do setor.
   Base: Operação Gerador 1500 · Limpeza 600 · Coleta 500 · Faróis 500 · Defesa 700 · Extração 800 · Rainha 2000
   (ex.: Operação Gerador no nível 10 = 1510 pontos = 15,10%). Com 50% ou mais o setor passa a ser dos humanos. Derrota devolve 40% do que a missão valeria ao inimigo.

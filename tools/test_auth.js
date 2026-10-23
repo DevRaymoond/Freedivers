@@ -33,6 +33,7 @@ const last = (ws, t) => [...ws.inbox].reverse().find(m => m.t === t);
   await wait(1200);
   let r = await req('GET', '/api/config'); check('servidor informa que há contas', r.status === 200 && r.json.auth === true);
   r = await req('GET', '/api/me'); check('sem sessão: /api/me é 401', r.status === 401);
+  r = await req('GET', '/api/world'); check('mapa público somente leitura não exige login', r.status === 200 && Object.keys(r.json.sectors).length > 300 && r.json.season >= 1);
 
   r = await req('POST', '/api/register', { username: 'ab', password: 'senhaforte1', confirm: 'senhaforte1' }); check('usuário curto é recusado', r.status === 400);
   r = await req('POST', '/api/register', { username: 'ana_01', password: 'senhaforte1', confirm: 'outra-senha' }); check('confirmação diferente é recusada', r.status === 400 && /confirma/i.test(r.json.error));

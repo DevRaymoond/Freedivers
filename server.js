@@ -81,6 +81,11 @@ const server = http.createServer((req, res) => {
   for (const [k, v] of Object.entries(SEC_HEADERS)) res.setHeader(k, v);
   if (process.env.TRUST_PROXY === '1' && req.headers['x-forwarded-proto'] === 'https') res.setHeader('Strict-Transport-Security', 'max-age=31536000');
   let p; try { p = decodeURIComponent((req.url || '/').split('?')[0]); } catch { res.writeHead(400); return res.end(); }
+  if (p === '/api/world' && req.method === 'GET') {                 // mapa público somente leitura (não exige login)
+    if (!world) { res.writeHead(404); return res.end('404'); }
+    if (limiter.hit(`world:${clientIp(req)}`, 60, 60000)) { res.writeHead(429, { 'Retry-After': '30' }); return res.end('429'); }
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); return res.end(JSON.stringify(world.snapshot()));
+  }
   if (p.startsWith('/api/')) {
     if (auth) return void auth.handle(req, res, p);
     if (p === '/api/config') { res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); return res.end('{"auth":false}'); }
@@ -214,7 +219,7 @@ wss.on('connection', ws => {
       })().catch(e => { console.error('[join]', e.message); send(ws, { t: 'err', msg: 'Erro no servidor.' }); });
     } else if (m.t === 'leave') {
       leave(ws);
-    } else if (social && /^(f|sq):/.test(m.t)) {
+    } else if (social && /^(f|sq|chat):/.test(m.t)) {
       social.handle(ws, m);
     } else if (m.t === 'lock' && meta.room && meta.room.host === ws) {
       meta.room.locked = !!m.locked; broadcastRoster(meta.room);

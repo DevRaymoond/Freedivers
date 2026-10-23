@@ -65,7 +65,7 @@ function open() {
         case 'hello': net.user = m.user || null; if (m.world) net.onWorld && net.onWorld(m.world, true); break;
         case 'world': net.onWorld && net.onWorld(m.d, !!m.d.reset); break;
         case 'campOk': case 'campErr': case 'campDone': net.onCamp && net.onCamp(m); break;
-        case 'f:lists': case 'f:notice': case 'f:ok': case 'f:err': case 'f:pres': case 'sq:list': case 'sq:invite': case 'sq:policy': net.onSocial && net.onSocial(m); break;
+        case 'f:lists': case 'f:notice': case 'f:ok': case 'f:err': case 'f:pres': case 'sq:list': case 'sq:invite': case 'sq:policy': case 'chat:msg': case 'chat:err': case 'chat:ok': net.onSocial && net.onSocial(m); break;
         case 'kicked': net.kicked = true; net.onKicked && net.onKicked(); break;
         case 'pong': net.rtt = Math.round(performance.now() - (net.t0 || performance.now())); break;
       }

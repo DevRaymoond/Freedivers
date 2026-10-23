@@ -308,7 +308,7 @@
   /* ───────── Campanha ───────── */
   .op-item.locked { opacity: .5; }
   .camp { display: grid; grid-template-columns: minmax(280px, 620px) minmax(0, 1fr); gap: 20px; align-items: start; } .camp-map { min-width: 0; }
-  canvas#campCv, canvas#onlCv { width: 100%; max-width: 100%; height: auto; aspect-ratio: 1; display: block; border: 1px solid var(--line2); cursor: pointer; background: #06101c; }
+  canvas#campCv, canvas#onlCv, canvas#mapCv { width: 100%; max-width: 100%; height: auto; aspect-ratio: 1; display: block; border: 1px solid var(--line2); cursor: pointer; background: #06101c; }
   .camp-leg { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--dim); }
   .camp-leg span::before { content: ""; display: inline-block; width: 10px; height: 10px; background: var(--c); margin-right: 6px; }
   .camp-side { display: flex; flex-direction: column; gap: 12px; }
@@ -316,7 +316,7 @@
   .camp-box h4 { margin: 0 0 8px; font-size: 14px; letter-spacing: 3px; text-transform: uppercase; }
   .camp-box small { color: var(--dim); display: block; margin-top: 8px; line-height: 1.5; font-size: 12px; }
   .camp-box p { margin: 6px 0 10px; line-height: 1.5; font-size: 14px; }
-  .cbar { display: grid; grid-template-columns: 90px 1fr 36px; gap: 8px; align-items: center; font-size: 12px; letter-spacing: 1px; margin-top: 5px; }
+  .cbar { display: grid; grid-template-columns: 90px 1fr 66px; gap: 8px; align-items: center; font-size: 12px; letter-spacing: 1px; margin-top: 5px; }
   .cbar .b { height: 8px; background: #0008; } .cbar .b i { display: block; height: 100%; } .cbar em { font-style: normal; font-family: var(--mono); text-align: right; }
   .tagrow2 { display: flex; gap: 6px; margin-bottom: 4px; }
   .camp-log { max-height: 150px; overflow: auto; font-size: 12px; color: #b8c4d2; line-height: 1.5; } .camp-log i { font-style: normal; font-family: var(--mono); color: var(--accent); margin-right: 6px; }
@@ -354,13 +354,30 @@
   .toast button { background: var(--accent); color: #140c02; border: 0; font: inherit; font-size: 11px; letter-spacing: 1px; padding: 6px 10px; font-weight: 700; text-transform: uppercase; } .toast button + button { background: transparent; color: var(--text); border: 1px solid var(--line2); }
   #auth #authClose { margin-top: -4px; }
   .progline { margin: 4px 0 10px; font-size: 13px; color: #b8c4d2; } .progline b { color: var(--ok); } .progline small { color: var(--dim); }
+
+  /* ───────── Liberação do setor, mapa e chat ───────── */
+  .lib { margin: 8px 0 12px; padding: 10px 12px; background: #0a0e13; border: 1px solid var(--line2); }
+  .lib-top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; } .lib-top b { font-family: var(--mono); font-size: 34px; color: var(--blue); line-height: 1; } .lib-top span { color: var(--dim); font-size: 12px; letter-spacing: 1px; }
+  .libbar { position: relative; height: 16px; margin: 8px 0 6px; background: #0009; border: 1px solid var(--line2); }
+  .libbar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--blue); } .libbar em { position: absolute; top: 0; bottom: 0; background: repeating-linear-gradient(45deg, #ffe14acc 0 6px, #ffe14a55 6px 12px); }
+  .libbar u { position: absolute; right: -1px; top: -4px; bottom: -4px; width: 3px; background: var(--ok); }
+  .lib small { color: #b8c4d2 !important; margin-top: 2px !important; } .lib small b { color: var(--accent); }
+  #sectorLine { margin-top: 4px; font-family: var(--mono); font-size: 12px; letter-spacing: 1px; color: #bfe3ff; text-shadow: 0 2px 6px #000; } #sectorLine b { color: #fff; }
+  #resSector { color: #bfe3ff; font-family: var(--mono); font-size: 13px; margin: 10px 0 0; } #resSector b { color: var(--accent); }
+  .friends-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 380px); gap: 16px; align-items: start; }
+  @media (max-width: 900px) { .friends-grid { grid-template-columns: 1fr; } }
+  .badge { background: var(--hot); color: #fff; font-size: 10px; padding: 1px 6px; border-radius: 9px; font-family: var(--mono); }
+  .chat { position: sticky; top: 0; } .chat-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+  .chat-tabs button { background: #0a0e13; border: 1px solid var(--line2); color: var(--dim); font: inherit; font-size: 12px; padding: 5px 10px; } .chat-tabs button.on { color: var(--text); border-color: var(--accent); }
+  .chat-msgs { height: 260px; overflow: auto; background: #0a0e13; border: 1px solid var(--line); padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+  .cm { font-size: 13px; line-height: 1.4; word-break: break-word; } .cm b { color: var(--blue); margin-right: 6px; font-weight: 600; } .cm.mine b { color: var(--accent); } .cm i { font-style: normal; color: var(--dim); font-size: 10px; margin-left: 8px; font-family: var(--mono); }
 </style>
 </head>
 <body>
 <div id="hud">
   <div id="dmg"></div>
   <div id="cross"></div>
-  <div id="objective"><b id="oTitle"></b><div id="oText"></div><div class="bar"><i id="oBar"></i></div><div id="lives"></div></div>
+  <div id="objective"><b id="oTitle"></b><div id="oText"></div><div id="sectorLine" style="display:none"></div><div class="bar"><i id="oBar"></i></div><div id="lives"></div></div>
   <div id="party"></div>
   <div id="wp"><span id="arrow"></span><div id="wpText"></div></div>
   <div id="boss"><b id="bossName"></b><div class="meter"><i id="bossBar"></i></div></div>
@@ -411,6 +428,7 @@
   <h2 id="resTitle">Operação concluída</h2>
   <div id="resRows"></div>
   <div class="res-total"><span>PONTUAÇÃO</span><b id="resScore">0</b><i id="resRank">C</i></div>
+  <div id="resSector"></div>
   <div id="resCredits"></div>
   <button class="btn primary" id="resBtn">Voltar ao menu</button>
 </div></div>

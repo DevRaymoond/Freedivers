@@ -1492,7 +1492,7 @@ function clearWorld() {
   playerGroup.visible = true; $('fade').style.opacity = 0;
 }
 
-let campaignCell = null, campaignRemote = false, curBiome = 'desert', startBase = null;
+let campaignCell = null, campaignRemote = false, curBiome = 'desert', startBase = null, campSector = null;
 const lateSent = new Set();
 async function startMission(id, levelArg, opts = {}) {
   if (net.role === 'client') return;
@@ -1503,7 +1503,7 @@ async function startMission(id, levelArg, opts = {}) {
   const L = Math.min(LEVEL_MAX, Math.max(1, Math.round(levelArg || missionLevel(id))));
   relax = L === 1;                                       // modo relax só no nível 1
   if (opts.cell && !opts.remote && net.role !== 'solo') { say('Saia do esquadrão online para jogar a campanha local.', 3); return; }
-  curFaction = opts.faction || selFaction; campaignCell = opts.cell || null; campaignRemote = !!opts.remote;
+  curFaction = opts.faction || selFaction; campaignCell = opts.cell || null; campaignRemote = !!opts.remote; campSector = opts.sector || null;
   clientMixed = false;
   mixFac = opts.mix ? { bugs: opts.mix.i, bots: opts.mix.r } : null; mixAngle = Math.random() * Math.PI * 2;
   if (mixFac) loadBots().catch(() => {});
@@ -1545,7 +1545,7 @@ async function startMission(id, levelArg, opts = {}) {
   mission.level = L;
   mission.livesLeft = mission.lives || 0;
   afterMissionBuilt(id);
-  startBase = { k: 'start', id, faction: curFaction, cell: campaignCell, remote: campaignRemote, title: mission.title, relax, level: L, biome: curBiome, R: ARENA_R, rocks: rockData, par: mission.par };
+  startBase = { k: 'start', id, faction: curFaction, cell: campaignCell, remote: campaignRemote, sector: campSector, title: mission.title, relax, level: L, biome: curBiome, R: ARENA_R, rocks: rockData, par: mission.par };
   lateSent.clear(); roster.forEach(p => lateSent.add(p.id));
   if (net.role === 'host') net.all({ ...startBase, spawn, lives: mission.lives || 0, mods: [mods.hp, mods.count, mods.speed, mods.edmg, mods.elite] });
   state = 'playing'; uiOpen = false;
@@ -1568,6 +1568,8 @@ function afterMissionBuilt(id) {
   $('boss').style.display = id === 'queen' ? 'block' : 'none';
   $('bossName').textContent = FT('Rainha da colmeia').toUpperCase();
   $('hud').classList.add('on');
+  $('sectorLine').style.display = campSector ? '' : 'none';
+  if (campSector) $('sectorLine').innerHTML = `SETOR ${campSector.name} · liberação <b>${WL.pct2(campSector.h)}</b> de ${WL.pct2(WL.HUMAN_MIN)} · vitória <b>+${WL.pct2(campSector.gain)}</b>`;
   $('menu').classList.add('hidden'); $('results').classList.remove('on');
   $('resume').style.display = 'none'; $('abort').style.display = 'none';
 }
@@ -1611,7 +1613,8 @@ function abortMission() {
 const AUTH = { enabled: false, user: null };
 const GEO = { n: 24, cells: [], idx: null, img: null };
 const mkWorld = (id, remote) => ({ id, remote, sec: new Map(), init: { i: 1, r: 1 }, season: 1, turn: 0, log: [], timeOffset: 0, sel: null, pending: null, squads: [] });
-const WLOC = mkWorld('camp', false), WNET = mkWorld('onl', true);
+const WLOC = mkWorld('camp', false), WNET = mkWorld('onl', true), WMAP = mkWorld('map', true);
+WMAP.viewOnly = true; WMAP.sec = WNET.sec;                     // MAPA mostra o mundo online sem poder atacar (e sem exigir login)
 const OWN = { H: { name: 'Jogadores', color: '#35b6ff' }, I: { name: 'Insetos', color: '#c050ff', fac: 'bugs' }, R: { name: 'Robôs', color: '#ff3b2e', fac: 'bots' } };
 const ckey = o => WL.key(o.c, o.r), cellName = o => WL.cellName(o.c, o.r);
 const worldReady = W => !!GEO.idx && W.sec.size > 0;
@@ -1649,7 +1652,9 @@ function applyServerWorld(d, full) {                              // mundo compa
   else for (const [k, v] of Object.entries(d.sectors || {})) WNET.sec.set(k, { h: v[0], i: v[1], r: v[2] });
   Object.assign(WNET, { init: d.init || WNET.init, season: d.season, turn: d.turn, log: d.log || [] });
   if (d.now) WNET.timeOffset = d.now - Date.now();
+  WMAP.sec = WNET.sec; Object.assign(WMAP, { init: WNET.init, season: WNET.season, turn: WNET.turn, log: WNET.log, timeOffset: WNET.timeOffset });
   if (onlineTabIsMap()) renderCampaign(WNET); else drawCampaign(WNET);
+  if ($('pane-map') && $('pane-map').classList.contains('on')) renderCampaign(WMAP);
 }
 // local: resultado da operação + um passo da guerra
 function campaignResult(k, win, level, party) {
@@ -1681,15 +1686,19 @@ function drawCampaign(W) {
       for (const [v, c] of [[s.h, OWN.H.color], [s.i, OWN.I.color], [s.r, OWN.R.color]]) { if (!v) continue; ctx.fillStyle = c; ctx.fillRect(bx, by, bw * v / WL.SCALE, 4); bx += bw * v / WL.SCALE; }
     }
     if (canAttack && attackable(W, o)) { ctx.strokeStyle = '#ffe14a'; ctx.lineWidth = 2; ctx.strokeRect(x + 3, y + 3, cs - 6, cs - 6); }
+    if (s.h > 0 && s.h < WL.HUMAN_MIN) {                              // % de liberação escrita na célula
+      ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; const tx = `${s.h < 1000 ? (s.h / 100).toFixed(1) : Math.round(s.h / 100)}%`;
+      ctx.lineWidth = 3; ctx.strokeStyle = '#000c'; ctx.strokeText(tx, x + cs / 2, y + cs / 2 - 3); ctx.fillStyle = '#fff'; ctx.fillText(tx, x + cs / 2, y + cs / 2 - 3);
+    }
   }
   if (W.sel) { const x = W.sel.c * cs, y = W.sel.r * cs; ctx.strokeStyle = '#fff'; ctx.lineWidth = 4; ctx.strokeRect(x + 2, y + 2, cs - 4, cs - 4); }
 }
 function renderCampaign(W) {
-  const host = W.remote ? $('onlMap') : $('pane-camp'); if (!host) return;
-  const head = W.remote ? '' : subNav('camp');
+  const host = W === WMAP ? $('pane-map') : W.remote ? $('onlMap') : $('pane-camp'); if (!host) return;
+  const head = W === WMAP ? subNav('map') : W.remote ? '' : subNav('camp');
   if (!worldReady(W)) {
-    host.innerHTML = `${head}<h2 class="sec">${W.remote ? 'Mundo online' : 'Campanha'}</h2><p style="color:var(--dim)">${W.remote && !net.connected ? 'Conectando ao mundo compartilhado…' : 'Carregando o mapa…'}</p>`;
-    if (!W.remote) bindSubNav(host); return;
+    host.innerHTML = `${head}<h2 class="sec">${W.remote ? 'Mundo online' : 'Campanha'}</h2><p style="color:var(--dim)">${!AUTH.enabled && W.remote ? 'O mapa online só existe no servidor com contas (modo local não tem mundo compartilhado).' : W.remote && !net.connected && W !== WMAP ? 'Conectando ao mundo compartilhado…' : 'Carregando o mapa…'}</p>`;
+    if (W === WMAP || !W.remote) bindSubNav(host); return;
   }
   const total = GEO.cells.length, count = f => { let n = 0; for (const s of W.sec.values()) if (WL.dominant(s) === f) n++; return n; };
   const bar = f => { const n = count(f); return `<div class="cbar"><span style="color:${OWN[f].color}">${OWN[f].name}</span><div class="b"><i style="width:${(n / total * 100).toFixed(1)}%;background:${OWN[f].color}"></i></div><em>${n}</em></div>`; };
@@ -1698,15 +1707,15 @@ function renderCampaign(W) {
       <div class="camp-map"><canvas id="${W.id}Cv" width="900" height="900"></canvas>
         <div class="camp-leg"><span style="--c:${OWN.H.color}">Jogadores</span><span style="--c:${OWN.I.color}">Insetos</span><span style="--c:${OWN.R.color}">Robôs</span><span style="--c:#ffe14a">Pode atacar</span></div></div>
       <div class="camp-side">
-        <div class="camp-box"><h4>${W.remote ? `Mundo compartilhado · temporada ${W.season}` : 'Campanha local'} · turno ${W.turn}</h4>${bar('H')}${bar('I')}${bar('R')}
+        <div class="camp-box"><h4>${W === WMAP ? `Mapa do mundo online · temporada ${W.season}` : W.remote ? `Mundo compartilhado · temporada ${W.season}` : 'Campanha local'} · turno ${W.turn}</h4>${bar('H')}${bar('I')}${bar('R')}
           <small>Um setor é dos humanos com 50% ou mais de domínio. Quanto mais território uma facção perde, mais forte ela fica: níveis baixos de ameaça são desativados
-            (insetos: nível ${campMinLevel(W, 'I')}+ · robôs: nível ${campMinLevel(W, 'R')}+).${W.remote ? ` ${net.connected ? 'Conectado: as mudanças dos outros jogadores aparecem ao vivo.' : 'Reconectando ao servidor…'}` : ' Só você joga neste mapa; o progresso fica neste aparelho.'}</small></div>
+            (insetos: nível ${campMinLevel(W, 'I')}+ · robôs: nível ${campMinLevel(W, 'R')}+).${W === WMAP ? ' Aqui você só olha: para atacar, use o Modo online.' : W.remote ? ` ${net.connected ? 'Conectado: as mudanças dos outros jogadores aparecem ao vivo.' : 'Reconectando ao servidor…'}` : ' Só você joga neste mapa; o progresso fica neste aparelho.'}</small></div>
         <div class="camp-box" id="${W.id}Cell"></div>
         <div class="camp-box"><h4>Notícias</h4><div class="camp-log">${W.log.map(l => `<div>${W.remote ? '' : `<i>T${l.t}</i> `}${l.m}</div>`).join('')}</div>
           ${W.remote ? '' : '<button class="btn ghost" id="campReset" style="margin-top:10px;padding:6px 14px;font-size:11px">Reiniciar campanha</button>'}</div>
       </div>
     </div>`;
-  if (!W.remote) bindSubNav(host);
+  if (W === WMAP || !W.remote) bindSubNav(host);
   const cv = $(W.id + 'Cv');
   cv.onclick = e => {
     const rc = cv.getBoundingClientRect();
@@ -1716,7 +1725,7 @@ function renderCampaign(W) {
   if ($('campReset')) $('campReset').onclick = () => { if (confirm('Reiniciar a campanha local? O mapa volta ao começo (créditos e melhorias ficam).')) { save.campaign = null; WLOC.sel = null; ensureLocalCampaign(); renderCampaign(WLOC); } };
   renderCampCell(W); drawCampaign(W); requestSquads(W);
 }
-function requestSquads(W) { if (W.remote && W.sel && net.connected && !WL.isHuman(W.sec.get(ckey(W.sel)))) net.send({ t: 'sq:list', key: ckey(W.sel) }); }
+function requestSquads(W) { if (W.remote && !W.viewOnly && W.sel && net.connected && !WL.isHuman(W.sec.get(ckey(W.sel)))) net.send({ t: 'sq:list', key: ckey(W.sel) }); }
 const esc = t => String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function renderSquadList(W) {
   const el = $(W.id + 'Squads'); if (!el) return;
@@ -1725,6 +1734,13 @@ function renderSquadList(W) {
     <i>${q.members}/${q.max}</i><button class="btn" data-sq="${q.id}" ${net.role === 'solo' || net.role === 'client' ? '' : 'disabled'} style="padding:6px 14px;font-size:11px">Entrar</button></div>`).join('');
   el.querySelectorAll('[data-sq]').forEach(b => { b.onclick = () => { b.disabled = true; net.send({ t: 'sq:join', room: +b.dataset.sq, ver: net.version }); }; });
 }
+function libHtml(s, gain) {                              // liberação do setor: número grande, barra até 50% e quanto falta
+  const need = WL.HUMAN_MIN, pct = Math.min(100, s.h / need * 100), add = gain ? Math.min(100 - pct, gain / need * 100) : 0;
+  const falta = Math.max(0, need - s.h);
+  return `<div class="lib"><div class="lib-top"><b>${WL.pct2(s.h)}</b><span>de liberação · o setor é liberado com ${WL.pct2(need)}</span></div>
+    <div class="libbar"><i style="width:${pct}%"></i>${add ? `<em style="left:${pct}%;width:${add}%"></em>` : ''}<u></u></div>
+    <small>${falta <= 0 ? 'Setor liberado pelos jogadores.' : `Faltam ${WL.pct2(falta)}${gain ? ` · esta missão soma <b>+${WL.pct2(gain)}</b> (cerca de ${Math.ceil(falta / gain)} vitória${Math.ceil(falta / gain) > 1 ? 's' : ''} iguais)` : ''}`}</small></div>`;
+}
 function renderCampCell(W) {
   const box = $(W.id + 'Cell'); if (!box) return;
   const o = W.sel;
@@ -1732,8 +1748,10 @@ function renderCampCell(W) {
   const s = W.sec.get(ckey(o)), f = WL.dominant(s), isClient = net.role === 'client';
   const pb = (lab, v, c) => `<div class="cbar"><span style="color:${c}">${lab}</span><div class="b"><i style="width:${v / 100}%;background:${c}"></i></div><em style="width:60px">${WL.pct2(v)}</em></div>`;
   const head = `<h4>Setor ${cellName(o)} · <span style="color:${OWN[f].color}">${OWN[f].name}</span></h4><div class="tagrow2"><span class="tag">${BIOME_NAME[o.b]}</span></div>
+    <div id="${W.id}Lib">${libHtml(s, 0)}</div>
     ${pb('Humanos', s.h, OWN.H.color)}${pb('Insetos', s.i, OWN.I.color)}${pb('Robôs', s.r, OWN.R.color)}`;
   if (WL.isHuman(s)) { box.innerHTML = `${head}<p style="color:var(--dim)">Território dos jogadores (${WL.pct2(s.h)}). Os inimigos podem tentar retomá-lo.</p>`; return; }
+  if (W.viewOnly) { box.innerHTML = `${head}<p style="color:var(--dim)">${attackable(W, o) ? 'Este setor pode ser atacado: a missão e o esquadrão aparecem no Modo online.' : 'Fora de alcance dos jogadores por enquanto.'}</p><button class="btn" id="mapGoOnline">Ir para o Modo online</button>`; $('mapGoOnline').onclick = () => { if (!AUTH.user && AUTH.enabled) showAuth('', 'online'); else showTab('online'); }; return; }
   const squadsBox = W.remote ? `<h4 style="margin-top:12px">Esquadrões neste setor</h4><div id="${W.id}Squads"></div>` : '';
   if (!attackable(W, o)) { box.innerHTML = `${head}<p style="color:var(--dim)">Fora de alcance. Domine um setor vizinho antes.</p>${squadsBox}`; renderSquadList(W); return; }
   const ef = enemyOfCell(W, o), fac = OWN[ef].fac, m = cellMission(W, o), min = sectorMin(W, o), L = Math.min(LEVEL_MAX, Math.max(min, save.campLevel || min)), mix = WL.mixOf(s);
@@ -1748,7 +1766,7 @@ function renderCampCell(W) {
     <button class="btn primary" id="${W.id}Go" ${!isClient && !missionBusy() && !offline && !blockedLocal ? '' : 'disabled'}>${isClient ? 'Aguardando o host' : offline ? (AUTH.user ? 'Reconectando…' : 'Entre para jogar online') : blockedLocal ? 'Saia da sala online primeiro' : 'Atacar este setor'}</button>
     <div id="${W.id}Msg" class="onlinemsg"></div>${squadsBox}`;
   const rng = $(W.id + 'Range');
-  const prog = v => { $(W.id + 'Prog').innerHTML = `Progresso da vitória: <b>+${WL.pct2(WL.missionGain(m.id, v))}</b> do setor <small>(base ${WL.MISSION_POINTS[m.id]} + nível ${v}; 1 ponto = 0,01%)</small>`; };
+  const prog = v => { const g = WL.missionGain(m.id, v); $(W.id + 'Prog').innerHTML = `Progresso da vitória: <b>+${WL.pct2(g)}</b> de liberação <small>(base ${WL.MISSION_POINTS[m.id]} + nível ${v}; 1 ponto = 0,01%)</small>`; $(W.id + 'Lib').innerHTML = libHtml(s, g); };
   const set = v => { v = Math.min(LEVEL_MAX, Math.max(min, v)); save.campLevel = v; persist(); rng.value = v; $(W.id + 'Lv').textContent = v; prog(v); };
   prog(L);
   rng.oninput = e => set(+e.target.value); $(W.id + 'Dn').onclick = () => set(+rng.value - 1); $(W.id + 'Up').onclick = () => set(+rng.value + 1);
@@ -1757,7 +1775,7 @@ function renderCampCell(W) {
   go.onclick = async () => {
     if (fac === 'bots' || mix) { if (!botsReady()) { go.disabled = true; go.textContent = 'Carregando robôs…'; try { await loadBots(); } catch { /* usa o modelo simples */ } } }
     const h = WL.hash2(o.c, o.r), level = +rng.value;
-    const opts = { cell: ckey(o), faction: fac, biome: o.b, R: 80 + (h % 40), rocks: 35 + (h >> 4) % 45, mix, remote: W.remote };
+    const opts = { cell: ckey(o), faction: fac, biome: o.b, R: 80 + (h % 40), rocks: 35 + (h >> 4) % 45, mix, remote: W.remote, sector: { name: cellName(o), h: s.h, gain: WL.missionGain(m.id, level) } };
     if (!W.remote) return startMission(m.id, level, opts);
     const msg = t => { const el = $(W.id + 'Msg'); if (el) el.textContent = t; };
     go.disabled = true;
@@ -1774,10 +1792,16 @@ net.onCamp = msg => {
   if (msg.t === 'campErr') { W.pending = null; renderCampCell(W); const el = $('onlMsg'); if (el) el.textContent = msg.msg; toast(msg.msg, { error: true }); return; }
   if (msg.t === 'campOk' && W.pending) {
     const p = W.pending; W.pending = null; p.opts.faction = msg.faction === 'I' ? 'bugs' : 'bots'; p.opts.mix = msg.mix || null;
+    if (p.opts.sector) p.opts.sector.gain = WL.missionGain(msg.mission || p.m.id, msg.level);
     startMission(msg.mission || p.m.id, msg.level, p.opts);                       // quem manda na missão é o servidor
   }
 };
 net.onWorld = applyServerWorld;
+async function fetchPublicWorld() {                    // sem login: lê o mapa público (o servidor limita a taxa)
+  if (!AUTH.enabled || net.connected) return;
+  try { const r = await fetch('/api/world', { cache: 'no-store' }); if (r.ok) applyServerWorld(await r.json(), true); } catch { /* sem rede */ }
+}
+setInterval(() => { if ($('pane-map') && $('pane-map').classList.contains('on')) fetchPublicWorld(); }, 15000);
 let rotEpoch = -1;
 setInterval(() => {                                      // contagem para a próxima troca de missão; ao virar o ciclo, redesenha o painel
   for (const W of [WLOC, WNET]) {
@@ -1811,6 +1835,7 @@ net.onSocial = m => {
       if (m.kind === 'request') toast(`${m.from.name} quer ser seu amigo.`, { ms: 15000, buttons: [['Aceitar', () => net.send({ t: 'f:accept', id: m.from.id })], ['Recusar', () => net.send({ t: 'f:decline', id: m.from.id })]] });
       else toast(`${m.from.name} agora é seu amigo!`);
       break;
+    case 'chat:msg': case 'chat:err': case 'chat:ok': net.chatEvent(m); break;
     case 'f:ok': toast(m.msg); break;
     case 'f:err': toast(m.msg, { error: true }); { const el = $('onlineMsg'); if (el) el.textContent = m.msg; } break;
     case 'f:pres': net.send({ t: 'f:list' }); if (m.online) toast(`${m.name} ficou online.`, { ms: 3500 }); break;
@@ -1821,33 +1846,107 @@ net.onSocial = m => {
       beep(660, 0.12, 0.08); break;
   }
 };
+// Chat: o servidor apenas repassa a mensagem em memória. Nada é gravado nem registrado lá: o histórico (e a lista de "jogados recentemente")
+// fica só neste aparelho, em localStorage, separado por conta.
+const chatKey = () => `mp_chat_${AUTH.user ? AUTH.user.id : 0}`, recentKey = () => `mp_recent_${AUTH.user ? AUTH.user.id : 0}`;
+const readLocal = (k, d) => { try { return JSON.parse(localStorage.getItem(k) || '') || d; } catch { return d; } };
+const writeLocal = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* sem armazenamento */ } };
+let CHAT = { active: null, hist: {}, unread: {}, loadedFor: -1 };
+function chatLoad() {
+  const uid = AUTH.user ? AUTH.user.id : 0; if (CHAT.loadedFor === uid) return;
+  CHAT = { active: null, hist: readLocal(chatKey(), {}), unread: {}, loadedFor: uid }; CHAT.hist.sq = [];
+}
+const chatSave = () => { const { sq, ...rest } = CHAT.hist; writeLocal(chatKey(), rest); };                // o chat do esquadrão não é gravado
+function chatPush(key, mine, text, from) {
+  chatLoad(); const arr = CHAT.hist[key] || (CHAT.hist[key] = []);
+  arr.push({ m: mine ? 1 : 0, t: text, at: Date.now(), f: from }); if (arr.length > 200) arr.splice(0, arr.length - 200);
+  if (key !== 'sq') chatSave();
+}
+function addRecent(name) {
+  if (!AUTH.user || !name || name === AUTH.user.name) return;
+  const list = readLocal(recentKey(), []).filter(r => r.name !== name); list.unshift({ name, at: Date.now() });
+  writeLocal(recentKey(), list.slice(0, 30));
+}
+const ago = at => { const m = Math.round((Date.now() - at) / 60000); return m < 1 ? 'agora há pouco' : m < 60 ? `há ${m} min` : m < 1440 ? `há ${Math.round(m / 60)} h` : `há ${Math.round(m / 1440)} d`; };
+function renderChatMessages() {
+  const box = $('chatMsgs'); if (!box || CHAT.active == null) return;
+  const arr = CHAT.hist[CHAT.active] || []; box.textContent = '';
+  if (!arr.length) { const p = document.createElement('small'); p.textContent = 'Nenhuma mensagem ainda. O histórico fica só neste aparelho.'; box.appendChild(p); }
+  for (const m of arr) {
+    const d = document.createElement('div'); d.className = 'cm' + (m.m ? ' mine' : '');
+    const w = document.createElement('b'); w.textContent = m.m ? 'Você' : (m.f || ''); const t = document.createElement('span'); t.textContent = m.t;
+    const h = document.createElement('i'); h.textContent = new Date(m.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    d.append(w, t, h); box.appendChild(d);
+  }
+  box.scrollTop = box.scrollHeight;
+}
+function chatSend() {
+  const inp = $('chatIn'); if (!inp || CHAT.active == null) return; const text = inp.value.trim().slice(0, 300); if (!text) return;
+  if (CHAT.active === 'sq') { if (net.role === 'solo') return toast('Você não está em um esquadrão.', { error: true }); net.send({ t: 'chat:squad', text }); }
+  else net.send({ t: 'chat:dm', to: Number(CHAT.active), text });
+  chatPush(CHAT.active, true, text); inp.value = ''; renderChatMessages();
+}
+net.chatEvent = m => {
+  chatLoad();
+  if (m.t === 'chat:msg') {
+    const key = m.kind === 'squad' ? 'sq' : String(m.from.id);
+    chatPush(key, false, m.text, m.from.name);
+    const open = CHAT.active === key && onlineTabIsFriends();
+    if (open) renderChatMessages();
+    else { CHAT.unread[key] = (CHAT.unread[key] || 0) + 1; toast(`${m.from.name}${m.kind === 'squad' ? ' (esquadrão)' : ''}: ${m.text.slice(0, 80)}`, { ms: 5000, buttons: [['Abrir', () => { onlTab = 'friends'; CHAT.active = key; CHAT.unread[key] = 0; showTab('online'); renderOnline(true); }]] }); beep(520, 0.08, 0.06); if (onlineTabIsFriends()) renderOnline(true); }
+  } else if (m.t === 'chat:err') toast(m.msg, { error: true });
+};
+const onlineTabIsFriends = () => !!$('chatPanel') && $('pane-online').classList.contains('on');
 function renderFriends(el) {
+  chatLoad();
   const row = (f, btns) => `<div class="fr-row"><span class="dot ${f.online ? 'on' : ''}"></span><b>${esc(f.name)}</b><em>${f.online ? (f.squad ? `em operação ${f.squad.sector ? WL.cellName(...f.squad.sector.split(',').map(Number)) : '(sala)'} · ${f.squad.members}/${f.squad.max}` : 'no menu') : 'offline'}</em><span class="fr-btns">${btns}</span></div>`;
   const b = (act, id, label, cls = '') => `<button class="btn ${cls}" data-fa="${act}" data-id="${id}" style="padding:5px 12px;font-size:11px;letter-spacing:1px">${label}</button>`;
   const inRoom = net.role !== 'solo';
-  el.innerHTML = `
-    <div class="camp-box" style="max-width:760px"><h4>Adicionar amigo</h4>
+  const friendNames = new Set([...FR.friends, ...FR.incoming, ...FR.outgoing, ...FR.blocked].map(f => f.name));
+  const recents = readLocal(recentKey(), []).filter(r => !friendNames.has(r.name));
+  const unread = id => CHAT.unread[id] ? ` <span class="badge">${CHAT.unread[id]}</span>` : '';
+  el.innerHTML = `<div class="friends-grid"><div>
+    <div class="camp-box"><h4>Adicionar amigo</h4>
       <div style="display:flex;gap:8px"><input class="field" id="frName" maxlength="20" placeholder="nome de usuário exato" autocomplete="off" autocapitalize="none" spellcheck="false"><button class="btn primary" id="frAdd">Enviar pedido</button></div>
       <small>O outro jogador precisa aceitar. Você pode bloquear quem incomodar.</small></div>
-    ${FR.incoming.length ? `<div class="camp-box" style="max-width:760px;margin-top:12px"><h4>Pedidos recebidos</h4>${FR.incoming.map(f => row({ ...f, online: false }, b('f:accept', f.id, 'Aceitar', 'primary') + b('f:decline', f.id, 'Recusar') + b('f:block', f.id, 'Bloquear', 'ghost')).replace('<em>offline</em>', '<em>quer ser seu amigo</em>')).join('')}</div>` : ''}
-    <div class="camp-box" style="max-width:760px;margin-top:12px"><h4>Amigos (${FR.friends.length})</h4>
+    ${FR.incoming.length ? `<div class="camp-box" style="margin-top:12px"><h4>Pedidos recebidos</h4>${FR.incoming.map(f => row({ ...f, online: false }, b('f:accept', f.id, 'Aceitar', 'primary') + b('f:decline', f.id, 'Recusar') + b('f:block', f.id, 'Bloquear', 'ghost')).replace('<em>offline</em>', '<em>quer ser seu amigo</em>')).join('')}</div>` : ''}
+    <div class="camp-box" style="margin-top:12px"><h4>Amigos (${FR.friends.length})</h4>
       ${FR.friends.length ? FR.friends.slice().sort((a, c) => (c.online - a.online) || a.name.localeCompare(c.name)).map(f => row(f,
-        (f.online && inRoom && !(f.squad && f.squad.id && net.roster.some(p => p.name === f.name)) ? b('sq:invite', f.id, 'Convidar') : '') +
-        (f.online && f.squad && net.role === 'solo' && !f.squad.locked && f.squad.members < f.squad.max && f.squad.policy !== 'closed' ? b('sq:joinf', f.squad.id, 'Entrar no esquadrão', 'primary') : '') +
+        b('chat', f.id, 'Conversar' + unread(f.id), 'primary') +
+        (f.online && inRoom && !net.roster.some(p => p.name === f.name) ? b('sq:invite', f.id, 'Convidar') : '') +
+        (f.online && f.squad && net.role === 'solo' && !f.squad.locked && f.squad.members < f.squad.max && f.squad.policy !== 'closed' ? b('sq:joinf', f.squad.id, 'Entrar no esquadrão') : '') +
         b('f:remove', f.id, 'Remover') + b('f:block', f.id, 'Bloquear', 'ghost'))).join('') : '<small>Você ainda não tem amigos. Envie um pedido acima.</small>'}</div>
-    ${FR.outgoing.length ? `<div class="camp-box" style="max-width:760px;margin-top:12px"><h4>Pedidos enviados</h4>${FR.outgoing.map(f => row({ ...f, online: false }, b('f:cancel', f.id, 'Cancelar')).replace('<em>offline</em>', '<em>aguardando</em>')).join('')}</div>` : ''}
-    ${FR.blocked.length ? `<div class="camp-box" style="max-width:760px;margin-top:12px"><h4>Bloqueados</h4>${FR.blocked.map(f => row({ ...f, online: false }, b('f:unblock', f.id, 'Desbloquear')).replace('<em>offline</em>', '')).join('')}</div>` : ''}`;
+    <div class="camp-box" style="margin-top:12px"><h4>Jogados recentemente</h4>
+      ${recents.length ? recents.slice(0, 12).map(r => `<div class="fr-row"><b>${esc(r.name)}</b><em>jogou com você ${ago(r.at)}</em><span class="fr-btns">${b('f:addname', esc(r.name), 'Adicionar') + b('f:blockname', esc(r.name), 'Bloquear', 'ghost')}</span></div>`).join('') : '<small>Quem entrar no seu esquadrão (ou você no deles) aparece aqui. A lista fica só neste aparelho.</small>'}</div>
+    ${FR.outgoing.length ? `<div class="camp-box" style="margin-top:12px"><h4>Pedidos enviados</h4>${FR.outgoing.map(f => row({ ...f, online: false }, b('f:cancel', f.id, 'Cancelar')).replace('<em>offline</em>', '<em>aguardando</em>')).join('')}</div>` : ''}
+    ${FR.blocked.length ? `<div class="camp-box" style="margin-top:12px"><h4>Bloqueados</h4>${FR.blocked.map(f => row({ ...f, online: false }, b('f:unblock', f.id, 'Desbloquear')).replace('<em>offline</em>', '')).join('')}</div>` : ''}
+    </div>
+    <div class="camp-box chat" id="chatPanel"><h4>Chat</h4>
+      <div class="chat-tabs">${inRoom ? `<button data-chat="sq" class="${CHAT.active === 'sq' ? 'on' : ''}">Esquadrão${unread('sq')}</button>` : ''}${FR.friends.map(f => `<button data-chat="${f.id}" class="${String(CHAT.active) === String(f.id) ? 'on' : ''}">${esc(f.name)}${unread(f.id)}</button>`).join('')}</div>
+      ${CHAT.active == null ? '<small>Escolha uma conversa acima. O Multipunk só repassa as mensagens: <b>não guarda conversa nem dados</b>. O histórico fica apenas neste aparelho.</small>' : `
+        <div id="chatMsgs" class="chat-msgs"></div>
+        <div style="display:flex;gap:8px;margin-top:8px"><input class="field" id="chatIn" maxlength="300" placeholder="Digite e aperte Enter" autocomplete="off"><button class="btn primary" id="chatSend">Enviar</button></div>
+        <button class="btn ghost" id="chatClear" style="margin-top:8px;padding:5px 12px;font-size:11px">Apagar histórico deste aparelho</button>`}
+    </div></div>`;
   const add = () => { const n = $('frName').value.trim(); if (n) { net.send({ t: 'f:add', name: n }); $('frName').value = ''; } };
   $('frAdd').onclick = add; $('frName').onkeydown = e => { if (e.key === 'Enter') add(); };
   el.querySelectorAll('[data-fa]').forEach(btn => {
     btn.onclick = () => {
-      const act = btn.dataset.fa, id = +btn.dataset.id;
-      if (act === 'sq:joinf') net.send({ t: 'sq:join', room: id, ver: net.version });
-      else if (act === 'f:block') { if (confirm('Bloquear este usuário? Ele não poderá mais enviar pedidos nem entrar nos seus esquadrões.')) net.send({ t: act, id }); }
-      else if (act === 'f:remove') { if (confirm('Remover este amigo?')) net.send({ t: act, id }); }
-      else net.send({ t: act, id });
+      const act = btn.dataset.fa, id = btn.dataset.id;
+      if (act === 'chat') { CHAT.active = String(id); CHAT.unread[id] = 0; renderOnline(true); }
+      else if (act === 'sq:joinf') net.send({ t: 'sq:join', room: +id, ver: net.version });
+      else if (act === 'f:addname') net.send({ t: 'f:add', name: id });
+      else if (act === 'f:blockname') { if (confirm('Bloquear este usuário?')) net.send({ t: 'f:block', name: id }); }
+      else if (act === 'f:block') { if (confirm('Bloquear este usuário? Ele não poderá mais enviar pedidos, mensagens nem entrar nos seus esquadrões.')) net.send({ t: act, id: +id }); }
+      else if (act === 'f:remove') { if (confirm('Remover este amigo?')) net.send({ t: act, id: +id }); }
+      else net.send({ t: act, id: +id });
     };
   });
+  el.querySelectorAll('[data-chat]').forEach(btn => { btn.onclick = () => { CHAT.active = btn.dataset.chat; CHAT.unread[CHAT.active] = 0; renderOnline(true); }; });
+  if (CHAT.active != null && $('chatIn')) {
+    renderChatMessages(); $('chatSend').onclick = chatSend; $('chatIn').onkeydown = e => { if (e.key === 'Enter') chatSend(); };
+    $('chatClear').onclick = () => { if (confirm('Apagar o histórico desta conversa neste aparelho?')) { CHAT.hist[CHAT.active] = []; chatSave(); renderChatMessages(); } };
+  }
 }
 
 // ───────────── login ─────────────
@@ -1956,6 +2055,8 @@ const creditFor = (id, win, total) => !win ? 0 : Math.round((total * 1.2 + (net.
 function presentResults(r) {
   save.credits += r.credits;
   if (r.win) { save.cleared = save.cleared || {}; save.cleared[r.mid] = Math.max(save.cleared[r.mid] || 0, (mission && mission.level) || 1); }
+  $('resSector').textContent = '';
+  if (campaignCell && campSector) $('resSector').innerHTML = r.win ? `Setor ${campSector.name}: liberação ${WL.pct2(campSector.h)} → <b>${WL.pct2(Math.min(WL.SCALE, campSector.h + campSector.gain))}</b> (+${WL.pct2(campSector.gain)})` : `Setor ${campSector.name}: a missão falhou e o inimigo recupera parte da liberação (${WL.pct2(campSector.h)} atual).`;
   if (campaignCell) {
     if (campaignRemote) { if (net.role !== 'client') net.campEnd(r.win); }        // o servidor aplica no mundo compartilhado
     else campaignResult(campaignCell, r.win, (mission && mission.level) || 1, campParty);
@@ -1984,7 +2085,7 @@ let selMission = 'operation', activeTab = 'home';
 let selFaction = save.faction === 'bots' ? 'bots' : 'bugs';
 curFaction = selFaction;
 const TABS = [['ops', 'NOVO JOGO'], ['online', 'MODO ONLINE'], ['settings', 'CONFIGURAÇÕES'], ['keys', 'CONTROLES']];
-const SUB_OF = { camp: 'ops', arsenal: 'ops', upg: 'ops' };           // arsenal e melhorias moram dentro de NOVO JOGO
+const SUB_OF = { camp: 'ops', map: 'ops', arsenal: 'ops', upg: 'ops' };           // arsenal e melhorias moram dentro de NOVO JOGO
 const FACTIONS = {
   bugs: { name: 'INSETOS', kick: 'O ENXAME', desc: 'Rastejadores, cuspidores, brutos, bombardeiros, investidores e a Rainha da colmeia. Veloz, numeroso e barulhento.' },
   bots: { name: 'ROBÔS', kick: 'EXÉRCITO MECHA', desc: 'Soldados-lâmina com espada, atiradores com rifle, pesados, kamikazes, lanceiros e o Comandante Mecha. Metódico e armado.' },
@@ -2014,7 +2115,7 @@ function levelPreview(m, L) {
           <div><small>RECOMPENSA</small><b>${pct(levelScale(L).reward)}</b></div>`;
 }
 const levelTag = v => v === 1 ? 'RELAX' : v >= 15 ? 'EXTREMO' : v >= 8 ? 'DIFÍCIL' : 'NORMAL';
-const subNav = on => `<div class="subnav">${[['camp', 'CAMPANHA'], ['ops', 'PARTIDA LIVRE'], ['arsenal', 'ARSENAL'], ['upg', 'MELHORIAS']].map(([id, l]) => `<button data-sub="${id}" class="${id === on ? 'on' : ''}">${l}</button>`).join('')}</div>`;
+const subNav = on => `<div class="subnav">${[['camp', 'CAMPANHA'], ['map', 'MAPA'], ['ops', 'PARTIDA LIVRE'], ['arsenal', 'ARSENAL'], ['upg', 'MELHORIAS']].map(([id, l]) => `<button data-sub="${id}" class="${id === on ? 'on' : ''}">${l}</button>`).join('')}</div>`;
 function bindSubNav(pane) { pane.querySelectorAll('[data-sub]').forEach(b => { b.onclick = () => showTab(b.dataset.sub); }); }
 function factionRow() {
   const canPick = net.role !== 'client';
@@ -2183,12 +2284,13 @@ function showTab(id) {
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === (SUB_OF[id] || id)));
   $('menu').classList.toggle('is-home', id === 'home');
   if (id === 'camp') renderCampaign(WLOC);
+  if (id === 'map') { renderCampaign(WMAP); fetchPublicWorld(); }
   if (id === 'online') renderOnline(true);
   document.querySelectorAll('.pane').forEach(p => p.classList.toggle('on', p.id === 'pane-' + id));
 }
 function buildMenu() {
   $('tabs').innerHTML = TABS.map(([id, label]) => `<button class="tab" data-tab="${id}">${label}</button>`).join('');
-  $('view').innerHTML = ['home', ...TABS.map(t => t[0]), 'camp', 'arsenal', 'upg'].map(id => `<section class="pane" id="pane-${id}"></section>`).join('');
+  $('view').innerHTML = ['home', ...TABS.map(t => t[0]), 'camp', 'map', 'arsenal', 'upg'].map(id => `<section class="pane" id="pane-${id}"></section>`).join('');
   $('logoHome').onclick = () => showTab('home');
   document.querySelectorAll('.tab').forEach(b => b.onclick = () => showTab(b.dataset.tab === 'ops' ? 'camp' : b.dataset.tab));
   $('resume').onclick = () => captureInput();
@@ -3202,16 +3304,18 @@ net.onRoster = () => {
     const np = net.roster.length; party = { hp: 1 + 0.45 * (np - 1), count: 1 + 0.5 * (np - 1), dmg: 1 + 0.08 * (np - 1) };   // a escala invisível acompanha o esquadrão
     for (const p of net.roster) if (p.id !== net.id && !lateSent.has(p.id)) sendLateStart(p.id);
   }
+  if (AUTH.user) for (const p of net.roster) if (p.id !== net.id) addRecent(p.name);
   const ids = new Set(net.roster.map(p => p.id));
   for (const id of Object.keys(others)) if (!ids.has(+id)) removeOther(+id);
   for (const p of net.roster) { const o = others[p.id]; if (o && o.name !== p.name) { o.name = p.name; setNameTag(o.group, p.name); } }
   renderOnline(); renderOps();
   if (!missionBusy() && state !== 'ended') $('sub').textContent = net.role === 'solo' ? 'Pronto para o deploy.' : `Sala ${net.code} · ${net.roster.length} jogador(es)`;
 };
+net.onClosedChat = () => { if (CHAT.hist) CHAT.hist.sq = []; };
 net.onLeft = id => { removeOther(id); delete respawnTimers[id]; lateSent.delete(id); };
 net.onClosed = msg => {
   if (missionBusy() || uiOpen) { finishMission(); clearWorld(); }
-  clearOthers(); state = state === 'ended' ? 'ended' : 'menu';
+  net.onClosedChat(); clearOthers(); state = state === 'ended' ? 'ended' : 'menu';
   $('menu').classList.remove('hidden'); $('resume').style.display = 'none'; $('abort').style.display = 'none';
   $('sub').textContent = msg; renderAll();
 };
@@ -3221,7 +3325,7 @@ async function clientStartMission(d) {
   await loadSpider();
   if (missionBusy()) { clearWorld(); }
   relax = !!d.relax;
-  campaignCell = d.cell || null; campaignRemote = !!d.remote; mixFac = null; clientMixed = false;
+  campaignCell = d.cell || null; campaignRemote = !!d.remote; campSector = d.sector || null; mixFac = null; clientMixed = false;
   curFaction = d.faction === 'bots' ? 'bots' : 'bugs';
   loadBots().catch(() => {});
   if (curFaction === 'bots') loadBots().catch(() => {});
@@ -3274,7 +3378,7 @@ function renderOnline(force) {
     $('onlLogin').onclick = () => showAuth('', 'online'); return;
   }
   const curTab = AUTH.enabled ? onlTab : 'code';
-  const tabs = AUTH.enabled ? [['map', 'MAPA ONLINE'], ['friends', 'AMIGOS' + (FR.incoming.length ? ` (${FR.incoming.length})` : '')], ['code', 'SALA POR CÓDIGO']] : [['code', 'SALA POR CÓDIGO']];
+  const tabs = AUTH.enabled ? [['map', 'MAPA ONLINE'], ['friends', 'AMIZADES' + (FR.incoming.length ? ` (${FR.incoming.length})` : '') + (Object.values(CHAT.unread || {}).reduce((x, y) => x + y, 0) ? ' ●' : '')], ['code', 'SALA POR CÓDIGO']] : [['code', 'SALA POR CÓDIGO']];
   pane.innerHTML = `<div class="subnav">${tabs.map(([id, l]) => `<button data-ot="${id}" class="${id === curTab ? 'on' : ''}">${l}</button>`).join('')}</div>${squadBar()}<div id="onlBody"></div><div id="onlineMsg" class="onlinemsg"></div>`;
   pane.querySelectorAll('[data-ot]').forEach(b => { b.onclick = () => { onlTab = b.dataset.ot; renderOnline(true); }; });
   if ($('leaveBtn')) $('leaveBtn').onclick = () => { net.leave(); clearOthers(); $('sub').textContent = 'Pronto para o deploy.'; renderAll(); showTab('online'); };
@@ -3441,7 +3545,7 @@ loop();
 
 // Gancho para testes automatizados e futuro multiplayer (estado serializável)
 window.__freedivers = window.__multipunk = {
-  get save() { return save; }, WLOC, WNET, GEO, AUTH, WL, FR: () => FR, campaignResult, campMinLevel, attackable, cellMission, missionUnlocked, get party() { return party; }, toast,
+  get save() { return save; }, WLOC, WNET, WMAP, GEO, CHAT: () => CHAT, AUTH, WL, FR: () => FR, campaignResult, campMinLevel, attackable, cellMission, missionUnlocked, get party() { return party; }, toast,
   player, keys, tick, startMission, setFaction, settings, get curFaction() { return curFaction; }, loadBots, botsReady,
   get enemies() { return enemies; }, get state() { return state; }, get kills() { return kills; },
   get mission() { return mission; }, setMouse(v) { mouseDown = v; },

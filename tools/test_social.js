@@ -55,11 +55,19 @@ const clear = (...ws) => ws.forEach(w => { w.inbox.length = 0; });
   check('aceitar o convite coloca B no esquadrão de A', !!last(B, 'joined') && last(A, 'players').players.length === 2);
   clear(B); send(B, { t: 'sq:accept', inviteId: inv.inviteId }); await wait(150); check('convite só vale uma vez', !!last(B, 'f:err'));
 
+  // ── chat (o servidor só repassa; nada é gravado) ──
+  clear(A, B, C); send(A, { t: 'chat:dm', to: B.id, text: 'oi   beto!' }); await wait(200);
+  check('mensagem direta chega ao amigo (texto limpo) e o remetente recebe confirmação', !!last(B, 'chat:msg') && last(B, 'chat:msg').text === 'oi beto !' && last(B, 'chat:msg').from.name === 'ana_a' && !!last(A, 'chat:ok'));
+  send(A, { t: 'chat:dm', to: C.id, text: 'oi' }); await wait(150); check('não dá para conversar com quem não é amigo', !!last(A, 'chat:err') && !last(C, 'chat:msg'));
+  clear(B); send(A, { t: 'chat:dm', to: B.id, text: 'x'.repeat(900) }); await wait(150); check('mensagem é limitada a 300 caracteres', last(B, 'chat:msg').text.length === 300);
+  clear(A, B); send(A, { t: 'chat:squad', text: 'bora atacar' }); await wait(150); check('chat do esquadrão chega aos outros membros', last(B, 'chat:msg') && last(B, 'chat:msg').kind === 'squad' && last(B, 'chat:msg').text === 'bora atacar' && !last(A, 'chat:msg'));
+  send(B, { t: 'leave' }); await wait(100); clear(A);
   // ── bloqueio ──
   send(B, { t: 'leave' }); await wait(150);
   clear(A, B); send(A, { t: 'f:block', id: B.id }); await wait(250);
   check('bloquear remove a amizade e lista o bloqueado', last(A, 'f:lists').blocked.some(x => x.name === 'beto_b') && !last(A, 'f:lists').friends.some(x => x.name === 'beto_b'));
   clear(B); send(B, { t: 'f:add', name: 'ana_a' }); await wait(150); check('bloqueado não consegue pedir amizade', !!last(B, 'f:err'));
+  clear(A, B); send(B, { t: 'chat:dm', to: A.id, text: 'oi' }); await wait(150); check('bloqueado não consegue mandar mensagem', !!last(B, 'chat:err') && !last(A, 'chat:msg'));
 
   // ── esquadrões abertos num setor ──
   clear(A, B, C, D, E, F);

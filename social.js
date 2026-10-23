@@ -6,6 +6,7 @@ const { limiter } = require('./auth');
 const MAX_RELATIONS = 120;                 // amigos + pedidos por conta
 const INVITE_MS = 60000;
 const NAME_RE = /^[A-Za-z0-9_]{3,20}$/;
+const cleanText = t => String(t == null ? '' : t).split('').map(c => (c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127) ? ' ' : c).join('').replace(/\s+/g, ' ').trim().slice(0, 300);
 
 function createSocial({ store, socketOf, rooms, send, joinRoom, memberCount, MAX_PLAYERS }) {
   const invites = new Map();               // inviteId -> { from, fromName, to, roomId, expires }
@@ -44,7 +45,7 @@ function createSocial({ store, socketOf, rooms, send, joinRoom, memberCount, MAX
 
   async function handle(ws, m) {
     const user = ws.meta.user; if (!user || typeof m.t !== 'string') return false;
-    if (!/^(f|sq):/.test(m.t)) return false;
+    if (!/^(f|sq|chat):/.test(m.t)) return false;
     if (limiter.hit(`soc:${user.id}`, 40, 60000)) { err(ws, 'Calma: muitas ações seguidas.'); return true; }
     try {
       switch (m.t) {
@@ -136,6 +137,27 @@ function createSocial({ store, socketOf, rooms, send, joinRoom, memberCount, MAX
           const room = roomById(inv.roomId); const bad = await canJoin(user, room); if (bad) return err(ws, bad), true;
           if (ws.meta.room === room) return true;
           const r = joinRoom(ws, room, String(m.ver || '')); if (r) err(ws, r); return true;
+        }
+        // ── chat: o servidor só repassa em memória; nada é gravado nem registrado (o histórico fica no aparelho de cada jogador) ──
+        case 'chat:dm': {
+          const id = Number(m.to), text = cleanText(m.text);
+          if (!Number.isInteger(id) || !text) return true;
+          if (limiter.hit(`chat:${user.id}`, 30, 60000)) return send(ws, { t: 'chat:err', to: id, msg: 'Calma: muitas mensagens seguidas.' }), true;
+          if (!(await store.areFriends(user.id, id)) || (await store.isBlocked(user.id, id))) return send(ws, { t: 'chat:err', to: id, msg: 'Só dá para conversar com amigos.' }), true;
+          const w = socketOf(id); if (!w) return send(ws, { t: 'chat:err', to: id, msg: 'Seu amigo está offline: a mensagem não foi entregue.' }), true;
+          send(w, { t: 'chat:msg', kind: 'dm', from: { id: user.id, name: user.name }, text, at: Date.now() });
+          send(ws, { t: 'chat:ok', to: id }); return true;
+        }
+        case 'chat:squad': {
+          const room = ws.meta.room, text = cleanText(m.text);
+          if (!room || !text) return true;
+          if (limiter.hit(`chat:${user.id}`, 30, 60000)) return send(ws, { t: 'chat:err', to: 0, msg: 'Calma: muitas mensagens seguidas.' }), true;
+          for (const w of [room.host, ...room.clients.values()]) {
+            if (w === ws || w.readyState !== 1 || !w.meta.user) continue;
+            if (await store.isBlocked(user.id, w.meta.user.id)) continue;
+            send(w, { t: 'chat:msg', kind: 'squad', from: { id: user.id, name: user.name }, text, at: Date.now() });
+          }
+          return true;
         }
         case 'sq:decline': { const inv = invites.get(String(m.inviteId)); if (inv && inv.to === user.id) { invites.delete(String(m.inviteId)); await notify(inv.from, { t: 'f:ok', msg: `${user.name} recusou o convite.` }); } return true; }
       }
