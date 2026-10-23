@@ -46,3 +46,6 @@
 - Removida a campanha local (`WLOC`, salvamento e guerra offline); o save antigo `campaign` é apagado ao abrir. O menu Mapa mostra o mundo online (somente leitura sem login).
 - **Partida livre** agora lista os setores que mais precisam de atenção (prestes a ser retomados, perto de dominar, fronteiras) com nível e botão Jogar; a partida vale para o mundo online. Sem contas no servidor, continua o treino sem efeito.
 - A abertura da operação de um setor virou `launchSector`, usada pelo painel do mapa e pela Partida livre.
+
+## 2026-10-23 (progresso por vitória menor)
+- Progresso base por missão dividido por 5 (Operação Gerador 15% → 3%, Rainha 20% → 4%, Coleta/Faróis 1%); a derrota continua custando 1/4 do valor. Constante `MISSION_POINTS` em `worldlogic.mjs`.

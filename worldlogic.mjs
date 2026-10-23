@@ -72,9 +72,9 @@ export const MIX_MIN = 1000;
 export const mixOf = s => (s.i >= MIX_MIN && s.r >= MIX_MIN ? { i: s.i, r: s.r } : null);
 export const minLevelSector = (sec, init, s, max = 20) => { const m = mixOf(s); return m ? Math.max(minLevel(sec, init, 'I', max), minLevel(sec, init, 'R', max)) : minLevel(sec, init, enemyOf(s), max); };
 
-// Cada missão vale um progresso base; cada nível de ameaça soma +1 ponto. 1 ponto = 0,01% do setor (nível 20 da Operação Gerador = 1520 pontos = 15,20%).
-export const MISSION_POINTS = { operation: 1500, purge: 600, samples: 500, beacon: 500, defend: 700, extract: 800, queen: 2000 };
-export const missionGain = (id, level) => (MISSION_POINTS[id] || 500) + Math.max(1, Math.min(20, Math.round(level) || 1));
+// Cada missão vale um progresso base; cada nível de ameaça soma +1 ponto. 1 ponto = 0,01% do setor (nível 20 da Operação Gerador = 320 pontos = 3,20%). Valores baixos de propósito: um setor leva dezenas de vitórias e os inimigos avançam sozinhos com o tempo.
+export const MISSION_POINTS = { operation: 300, purge: 120, samples: 100, beacon: 100, defend: 140, extract: 160, queen: 400 };
+export const missionGain = (id, level) => (MISSION_POINTS[id] || 100) + Math.max(1, Math.min(20, Math.round(level) || 1));
 const move = (s, from, to, n) => { n = Math.min(n, s[from]); s[from] -= n; s[to] += n; return n; };
 // vitória: os humanos tomam o progresso do defensor (e, se faltar, do outro lado). Derrota: o defensor recupera 25% do que a missão valeria.
 export function applyWin(s, missionId, level) {
