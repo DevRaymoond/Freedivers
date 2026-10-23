@@ -3,6 +3,8 @@
 // Sem dependências de DOM ou Node: só dados e funções puras (o sorteio é determinístico a partir de uma semente).
 
 export const N = 24;
+export const SCALE = 10000;                                      // 100% = 10000 pontos; 1 ponto de progresso = 0,01% do setor
+export const pct2 = v => (v / 100).toFixed(2).replace('.', ',') + '%';
 export const key = (c, r) => `${c},${r}`;
 export const cellName = (c, r) => String.fromCharCode(65 + c) + (r + 1);
 export const FACTION_NAME = { H: 'Jogadores', I: 'Insetos', R: 'Robôs' };
@@ -29,13 +31,13 @@ export function seedSectors(idx) {
   for (const o of idx.cells) {
     const jitter = (hash2(o.c, o.r) % 100) / 100 * 1.6 - 0.8;
     const f = d(o, seedP) <= 1.9 ? 'H' : (d(o, seedI) + jitter <= d(o, seedR) ? 'I' : 'R');
-    sec.set(key(o.c, o.r), { h: f === 'H' ? 100 : 0, i: f === 'I' ? 100 : 0, r: f === 'R' ? 100 : 0 });
+    sec.set(key(o.c, o.r), { h: f === 'H' ? SCALE : 0, i: f === 'I' ? SCALE : 0, r: f === 'R' ? SCALE : 0 });
   }
   return sec;
 }
 export function initTotals(sec) { const t = { i: 0, r: 0 }; for (const s of sec.values()) { t.i += s.i; t.r += s.r; } return t; }
 
-export const HUMAN_MIN = 50;                                    // 50% ou mais = quadrado dos humanos
+export const HUMAN_MIN = 5000;                                  // 50% ou mais = quadrado dos humanos
 export const isHuman = s => s.h >= HUMAN_MIN;
 export function dominant(s) { return s.h > s.i && s.h > s.r ? 'H' : (s.i >= s.r ? 'I' : 'R'); }
 export const enemyOf = s => (s.i >= s.r ? 'I' : 'R');           // quem defende o quadrado contra os humanos
@@ -58,19 +60,21 @@ export const epochOf = now => Math.floor(now / ROTATION_MS);
 export const nextRotation = now => (epochOf(now) + 1) * ROTATION_MS;
 export const missionOf = (c, r, season, now) => MISSION_IDS[hash2(hash2(c, r) ^ (season * 977), epochOf(now) * 7919 + 13) % MISSION_IDS.length];
 // fronteira: quadrado onde insetos e robôs aparecem juntos (10% ou mais cada); no mapa os dois lutam entre si e contra os jogadores
-export const MIX_MIN = 10;
+export const MIX_MIN = 1000;
 export const mixOf = s => (s.i >= MIX_MIN && s.r >= MIX_MIN ? { i: s.i, r: s.r } : null);
 export const minLevelSector = (sec, init, s, max = 20) => { const m = mixOf(s); return m ? Math.max(minLevel(sec, init, 'I', max), minLevel(sec, init, 'R', max)) : minLevel(sec, init, enemyOf(s), max); };
 
-export const battleGain = (level, party) => Math.max(10, Math.min(55, Math.round(12 + 1.6 * level + 3 * (party - 1))));
+// Cada missão vale um progresso base; cada nível de ameaça soma +1 ponto. 1 ponto = 0,01% do setor (nível 20 da Operação Gerador = 1520 pontos = 15,20%).
+export const MISSION_POINTS = { operation: 1500, purge: 600, samples: 500, beacon: 500, defend: 700, extract: 800, queen: 2000 };
+export const missionGain = (id, level) => (MISSION_POINTS[id] || 500) + Math.max(1, Math.min(20, Math.round(level) || 1));
 const move = (s, from, to, n) => { n = Math.min(n, s[from]); s[from] -= n; s[to] += n; return n; };
-// vitória: os humanos tomam porcentagem do defensor (e, se faltar, do outro lado). Derrota: o defensor recupera um pouco.
-export function applyWin(s, level, party) {
-  const def = enemyOf(s), other = def === 'I' ? 'r' : 'i', d = def === 'I' ? 'i' : 'r', gain = battleGain(level, party);
+// vitória: os humanos tomam o progresso do defensor (e, se faltar, do outro lado). Derrota: o defensor recupera 40% do que a missão valeria.
+export function applyWin(s, missionId, level) {
+  const def = enemyOf(s), other = def === 'I' ? 'r' : 'i', d = def === 'I' ? 'i' : 'r', gain = missionGain(missionId, level);
   let got = move(s, d, 'h', gain); if (got < gain) got += move(s, other, 'h', gain - got);
   return got;
 }
-export function applyLoss(s) { const d = enemyOf(s) === 'I' ? 'i' : 'r'; return -move(s, 'h', d, 8); }
+export function applyLoss(s, missionId, level) { const d = enemyOf(s) === 'I' ? 'i' : 'r'; return -move(s, 'h', d, Math.round(missionGain(missionId, level) * 0.4)); }
 
 // passo da guerra: cada facção empurra um quadrado vizinho (contra a outra facção ou contra os humanos)
 export function warTick(idx, sec, seed, minHumanSectors = 3) {
@@ -88,7 +92,7 @@ export function warTick(idx, sec, seed, minHumanSectors = 3) {
       if (humanCount(sec) <= minHumanSectors && isHuman(t)) continue;         // o último reduto não cai
       if (R() > 0.3 + 0.4 * (humanCount(sec) / total)) continue;
     } else if (R() > 0.6) continue;
-    const before = dominant(t), n = move(t, def, fl, 6 + Math.floor(R() * 8));
+    const before = dominant(t), n = move(t, def, fl, 150 + Math.floor(R() * 300));
     if (!n) continue;
     changed.add(tk);
     if (dominant(t) !== before) events.push(`${FACTION_NAME[f]} tomaram o setor ${cellName(tc.c, tc.r)} dos ${FACTION_NAME[before].toLowerCase()}.`);

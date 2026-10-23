@@ -308,7 +308,7 @@
   /* ───────── Campanha ───────── */
   .op-item.locked { opacity: .5; }
   .camp { display: grid; grid-template-columns: minmax(280px, 620px) minmax(0, 1fr); gap: 20px; align-items: start; } .camp-map { min-width: 0; }
-  canvas#campCv { width: 100%; max-width: 100%; height: auto; aspect-ratio: 1; display: block; border: 1px solid var(--line2); cursor: pointer; background: #06101c; }
+  canvas#campCv, canvas#onlCv { width: 100%; max-width: 100%; height: auto; aspect-ratio: 1; display: block; border: 1px solid var(--line2); cursor: pointer; background: #06101c; }
   .camp-leg { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--dim); }
   .camp-leg span::before { content: ""; display: inline-block; width: 10px; height: 10px; background: var(--c); margin-right: 6px; }
   .camp-side { display: flex; flex-direction: column; gap: 12px; }
@@ -339,6 +339,21 @@
   .who button { background: transparent; border: 1px solid var(--line2); color: var(--dim); font: inherit; font-size: 11px; padding: 4px 10px; letter-spacing: 2px; }
   .who button:hover { color: var(--text); border-color: var(--accent); }
   .frontier { margin: 8px 0 4px; padding: 7px 10px; border: 1px solid #ff9a3a; background: #ff9a3a18; color: #ffb066; font-size: 12px; letter-spacing: 1px; line-height: 1.4; }
+
+  /* ───────── Online: amigos, esquadrões, avisos ───────── */
+  .squadbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 14px; margin-bottom: 14px; background: #4aa8ff14; border: 1px solid #4aa8ff66; }
+  .squadbar small { letter-spacing: 3px; color: var(--blue); font-family: var(--mono); font-size: 11px; display: block; margin-bottom: 4px; }
+  .sq-m { display: inline-block; margin-right: 12px; font-size: 14px; }
+  .sq-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; } .sq-row span { flex: 1; } .sq-row i { font-style: normal; font-family: var(--mono); color: var(--accent); }
+  .fr-row { display: flex; align-items: center; gap: 10px; padding: 8px 2px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .fr-row b { font-size: 15px; letter-spacing: 1px; } .fr-row em { font-style: normal; color: var(--dim); font-size: 12px; flex: 1; min-width: 120px; } .fr-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #566; display: inline-block; } .dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  #toasts { position: fixed; top: 64px; right: 14px; z-index: 95; display: flex; flex-direction: column; gap: 8px; width: min(340px, calc(100vw - 28px)); }
+  .toast { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px; background: #10151cf2; border: 1px solid var(--blue); font-size: 13px; box-shadow: 0 6px 24px #0008; animation: rise .25s ease; }
+  .toast.err { border-color: var(--danger); } .toast span { flex: 1; min-width: 150px; }
+  .toast button { background: var(--accent); color: #140c02; border: 0; font: inherit; font-size: 11px; letter-spacing: 1px; padding: 6px 10px; font-weight: 700; text-transform: uppercase; } .toast button + button { background: transparent; color: var(--text); border: 1px solid var(--line2); }
+  #auth #authClose { margin-top: -4px; }
+  .progline { margin: 4px 0 10px; font-size: 13px; color: #b8c4d2; } .progline b { color: var(--ok); } .progline small { color: var(--dim); }
 </style>
 </head>
 <body>
@@ -379,7 +394,7 @@
   <header class="topbar">
     <div class="logo" id="logoHome" style="cursor:pointer"><span class="mark"></span><div><b>MULTI</b>PUNK<small>COOP ONLINE · SOLO · FORÇA DE INTERVENÇÃO</small></div></div>
     <nav id="tabs"></nav>
-    <div class="who" id="who" style="display:none"><span id="whoName"></span><button id="logout" title="Sair da conta">Sair</button></div>
+    <div class="who" id="who" style="display:none"><span id="whoName"></span><button id="logout" title="Sair da conta">Sair</button><button id="loginBtn">Entrar</button></div>
     <div class="wallet"><span>CRÉDITOS</span><b id="credits">0</b></div>
   </header>
   <main id="view"></main>
@@ -407,6 +422,7 @@
   <label>Senha<input class="field" id="authPass" name="password" type="password" maxlength="100" autocomplete="current-password" required placeholder="mínimo de 8 caracteres"></label>
   <label id="authConfirmRow" style="display:none">Confirmar senha<input class="field" id="authConfirm" name="confirm" type="password" maxlength="100" autocomplete="new-password" placeholder="repita a senha"></label>
   <button class="btn primary" id="authGo" type="submit">Entrar</button>
+  <button class="btn ghost" id="authClose" type="button">Agora não</button>
   <div id="authMsg" class="onlinemsg"></div>
   <small>O mapa da guerra é compartilhado por todos os jogadores. Só guardamos o usuário e a senha (criptografada com bcrypt).</small>
 </form></div>

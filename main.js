@@ -1446,7 +1446,8 @@ function clearWorld() {
   playerGroup.visible = true; $('fade').style.opacity = 0;
 }
 
-let campaignCell = null, curBiome = 'desert';
+let campaignCell = null, campaignRemote = false, curBiome = 'desert', startBase = null;
+const lateSent = new Set();
 function startMission(id, levelArg, opts = {}) {
   if (net.role === 'client') return;
   const mi = MISSIONS.findIndex(m => m.id === id);
@@ -1454,7 +1455,8 @@ function startMission(id, levelArg, opts = {}) {
   ensureAudio();
   const L = Math.min(LEVEL_MAX, Math.max(1, Math.round(levelArg || missionLevel(id))));
   relax = L === 1;                                       // modo relax só no nível 1
-  curFaction = opts.faction || selFaction; campaignCell = opts.cell || null;
+  if (opts.cell && !opts.remote && net.role !== 'solo') { say('Saia do esquadrão online para jogar a campanha local.', 3); return; }
+  curFaction = opts.faction || selFaction; campaignCell = opts.cell || null; campaignRemote = !!opts.remote;
   clientMixed = false;
   mixFac = opts.mix ? { bugs: opts.mix.i, bots: opts.mix.r } : null; mixAngle = Math.random() * Math.PI * 2;
   if (mixFac) loadBots().catch(() => {});
@@ -1496,11 +1498,9 @@ function startMission(id, levelArg, opts = {}) {
   mission.level = L;
   mission.livesLeft = mission.lives || 0;
   afterMissionBuilt(id);
-  if (net.role === 'host') {
-    net.lock(true);
-    net.all({ k: 'start', id, faction: curFaction, cell: campaignCell, title: mission.title, relax, level: L, biome: curBiome, R: ARENA_R, rocks: rockData,
-              spawn, lives: mission.lives || 0, par: mission.par, mods: [mods.hp, mods.count, mods.speed, mods.edmg, mods.elite] });
-  }
+  startBase = { k: 'start', id, faction: curFaction, cell: campaignCell, remote: campaignRemote, title: mission.title, relax, level: L, biome: curBiome, R: ARENA_R, rocks: rockData, par: mission.par };
+  lateSent.clear(); roster.forEach(p => lateSent.add(p.id));
+  if (net.role === 'host') net.all({ ...startBase, spawn, lives: mission.lives || 0, mods: [mods.hp, mods.count, mods.speed, mods.edmg, mods.elite] });
   state = 'playing'; uiOpen = false;
   say(id === 'operation' ? 'Siga até o gerador. Cuidado com os pelotões.' : 'Boa sorte, soldado.', 3);
   captureInput();
@@ -1531,7 +1531,6 @@ function endMission(win) {
   const R = buildResults(win);
   if (net.role === 'host') {
     for (const p of net.roster) if (p.id !== net.id) net.to(p.id, { k: 'end', ...R, credits: creditFor(p.id, win, R.total), kills: killsBy[p.id] || 0 });
-    net.lock(false);
   }
   finishMission(win);
   presentResults({ ...R, credits: creditFor(net.id, win, R.total), kills: net.role === 'solo' ? kills : (killsBy[net.id] || 0) });
@@ -1546,9 +1545,9 @@ function finishMission() {
 }
 function abortMission() {
   if (state === 'ended' || state === 'menu') return;
-  if (campaignCell && WORLD.remote && net.role !== 'client') net.campEnd(false, true);
-  campaignCell = null;
-  if (net.role === 'host') { net.all({ k: 'abort' }); net.lock(false); }
+  if (campaignCell && campaignRemote && net.role !== 'client') net.campEnd(false, true);
+  campaignCell = null; campaignRemote = false;
+  if (net.role === 'host') net.all({ k: 'abort' });
   if (net.role === 'client') { net.leave(); }
   finishMission();
   clearWorld();
@@ -1558,157 +1557,251 @@ function abortMission() {
   renderAll();
 }
 
-// ───────────────────────── Contas e campanha: mapa-múndi ─────────────────────────
-// Cada quadrado de terra do continente central é uma operação. Três forças (humanos H, insetos I, robôs R) têm uma porcentagem de domínio em cada
-// quadrado; ganhar uma operação empurra a porcentagem dos humanos para cima. Com banco (login) o mundo é UM SÓ para todos os jogadores, mantido no
-// servidor e mostrado ao vivo; sem banco (jogo local) a mesma lógica (worldlogic.mjs) roda no navegador e o estado fica em save.campaign.
+// ───────────────────────── Mapa-múndi: campanha local e mundo online ─────────────────────────
+// Cada quadrado de terra do continente é uma operação; três forças (humanos H, insetos I, robôs R) têm uma porcentagem de domínio em cada um.
+// • NOVO JOGO = campanha local: você contra o resto do mapa, sem conta, salva neste aparelho (WLOC).
+// • MODO ONLINE = mundo compartilhado por todos os jogadores, mantido no servidor e mostrado ao vivo (WNET). Precisa de login.
 const AUTH = { enabled: false, user: null };
-const WORLD = { n: 24, cells: [], idx: null, sec: new Map(), init: { i: 1, r: 1 }, season: 1, turn: 0, log: [], img: null, remote: false };
+const GEO = { n: 24, cells: [], idx: null, img: null };
+const mkWorld = (id, remote) => ({ id, remote, sec: new Map(), init: { i: 1, r: 1 }, season: 1, turn: 0, log: [], timeOffset: 0, sel: null, pending: null, squads: [] });
+const WLOC = mkWorld('camp', false), WNET = mkWorld('onl', true);
 const OWN = { H: { name: 'Jogadores', color: '#35b6ff' }, I: { name: 'Insetos', color: '#c050ff', fac: 'bugs' }, R: { name: 'Robôs', color: '#ff3b2e', fac: 'bots' } };
 const ckey = o => WL.key(o.c, o.r), cellName = o => WL.cellName(o.c, o.r);
-const worldReady = () => !!WORLD.idx && WORLD.sec.size > 0;
-const dominantOf = o => WL.dominant(WORLD.sec.get(ckey(o)));
-const attackable = o => WL.attackable(WORLD.idx, WORLD.sec, ckey(o));
-const campMinLevel = f => WL.minLevel(WORLD.sec, WORLD.init, f, LEVEL_MAX);
-const sectorMin = o => WL.minLevelSector(WORLD.sec, WORLD.init, WORLD.sec.get(ckey(o)), LEVEL_MAX);
-const enemyOfCell = o => WL.enemyOf(WORLD.sec.get(ckey(o)));
+const worldReady = W => !!GEO.idx && W.sec.size > 0;
+const attackable = (W, o) => WL.attackable(GEO.idx, W.sec, ckey(o));
+const campMinLevel = (W, f) => WL.minLevel(W.sec, W.init, f, LEVEL_MAX);
+const sectorMin = (W, o) => WL.minLevelSector(W.sec, W.init, W.sec.get(ckey(o)), LEVEL_MAX);
+const enemyOfCell = (W, o) => WL.enemyOf(W.sec.get(ckey(o)));
+const worldNow = W => Date.now() + (W.timeOffset || 0);
+function cellMission(W, o) { return MISSIONS.find(m => m.id === WL.missionOf(o.c, o.r, W.season, worldNow(W))) || MISSIONS[0]; }
+const fmtMin = ms => { const t = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
+function FT2(str, fac) { const keep = curFaction; curFaction = fac; const r = FT(str); curFaction = keep; return r; }
 async function loadWorld() {
-  if (!WORLD.idx) {
+  if (!GEO.idx) {
     try {
       const j = await (await fetch('./assets/world.json')).json();
-      WORLD.n = j.n; WORLD.cells = j.cells; WORLD.idx = WL.makeIndex(j.cells);
-      WORLD.img = new Image(); WORLD.img.src = './assets/worldmap.jpg'; WORLD.img.onload = () => drawCampaign();
+      GEO.n = j.n; GEO.cells = j.cells; GEO.idx = WL.makeIndex(j.cells);
+      GEO.img = new Image(); GEO.img.src = './assets/worldmap.jpg'; GEO.img.onload = () => { drawCampaign(WLOC); drawCampaign(WNET); };
     } catch { return; }                                            // sem o mapa: só a partida livre
   }
-  WORLD.remote = AUTH.enabled && !!AUTH.user;
-  if (!WORLD.remote) ensureLocalCampaign();
-  renderCampaign();
+  ensureLocalCampaign();
+  renderCampaign(WLOC); renderOnline();
 }
 function ensureLocalCampaign() {
   const C = save.campaign;
-  if (C && C.sec && Object.keys(C.sec).length === WORLD.cells.length) {
-    Object.assign(WORLD, { sec: WL.unpackSectors(C.sec), init: C.init, turn: C.turn, log: C.log || [], season: C.season || 1 }); return;
+  if (C && C.sec && Object.keys(C.sec).length === GEO.cells.length) {
+    Object.assign(WLOC, { sec: WL.unpackSectors(C.sec), init: C.init, turn: C.turn, log: C.log || [], season: C.season || 1 }); return;
   }
-  const sec = WL.seedSectors(WORLD.idx);
-  Object.assign(WORLD, { sec, init: WL.initTotals(sec), turn: 0, season: 1, log: [{ t: 0, m: 'Cabeça de ponte estabelecida. Insetos e robôs disputam o continente.' }] });
+  const sec = WL.seedSectors(GEO.idx);
+  Object.assign(WLOC, { sec, init: WL.initTotals(sec), turn: 0, season: 1, log: [{ t: 0, m: 'Cabeça de ponte estabelecida. Insetos e robôs disputam o continente.' }] });
   saveLocalCampaign();
 }
-function saveLocalCampaign() { save.campaign = { sec: WL.packSectors(WORLD.sec), init: WORLD.init, turn: WORLD.turn, log: WORLD.log, season: WORLD.season }; persist(); }
+function saveLocalCampaign() { save.campaign = { sec: WL.packSectors(WLOC.sec), init: WLOC.init, turn: WLOC.turn, log: WLOC.log, season: WLOC.season }; persist(); }
 function applyServerWorld(d, full) {                              // mundo compartilhado: tudo vem do servidor
-  if (full) WORLD.sec = WL.unpackSectors(d.sectors);
-  else for (const [k, v] of Object.entries(d.sectors || {})) WORLD.sec.set(k, { h: v[0], i: v[1], r: v[2] });
-  Object.assign(WORLD, { init: d.init || WORLD.init, season: d.season, turn: d.turn, log: d.log || [] });
-  if (d.now) WORLD.timeOffset = d.now - Date.now();
-  if ($('pane-camp') && $('pane-camp').classList.contains('on')) renderCampaign(); else drawCampaign();
+  if (full) WNET.sec = WL.unpackSectors(d.sectors);
+  else for (const [k, v] of Object.entries(d.sectors || {})) WNET.sec.set(k, { h: v[0], i: v[1], r: v[2] });
+  Object.assign(WNET, { init: d.init || WNET.init, season: d.season, turn: d.turn, log: d.log || [] });
+  if (d.now) WNET.timeOffset = d.now - Date.now();
+  if (onlineTabIsMap()) renderCampaign(WNET); else drawCampaign(WNET);
 }
 // local: resultado da operação + um passo da guerra
 function campaignResult(k, win, level, party) {
-  const o = WORLD.idx.byKey.get(k), s = WORLD.sec.get(k); if (!o || !s) return;
+  const W = WLOC, o = GEO.idx.byKey.get(k), s = W.sec.get(k); if (!o || !s) return;
   const name = cellName(o), before = WL.dominant(s), ev = [];
-  if (win) { const d = WL.applyWin(s, level, party); ev.push(WL.isHuman(s) && before !== 'H' ? `Setor ${name} libertado dos ${OWN[before].name.toLowerCase()}! (+${d}%)` : `Os jogadores avançaram ${d}% em ${name}.`); }
-  else { WL.applyLoss(s); ev.push(`A operação em ${name} falhou. O inimigo recuperou parte do setor.`); }
-  WORLD.turn++;
-  ev.push(...WL.warTick(WORLD.idx, WORLD.sec, WL.hash2(WORLD.season, WORLD.turn)).events);
-  if (win && WL.campaignWon(WORLD.sec)) ev.push('O continente é dos jogadores. Campanha vencida!');
-  for (const m of ev) WORLD.log.unshift({ t: WORLD.turn, m });
-  WORLD.log.length = Math.min(WORLD.log.length, 14);
+  const mid = (mission && mission.id) || 'operation';
+  if (win) { const d = WL.applyWin(s, mid, level); ev.push(WL.isHuman(s) && before !== 'H' ? `Setor ${name} libertado dos ${OWN[before].name.toLowerCase()}! (+${WL.pct2(d)})` : `Os jogadores avançaram ${WL.pct2(d)} em ${name}.`); }
+  else { const d = WL.applyLoss(s, mid, level); ev.push(`A operação em ${name} falhou. O inimigo recuperou ${WL.pct2(-d)} do setor.`); }
+  W.turn++;
+  ev.push(...WL.warTick(GEO.idx, W.sec, WL.hash2(W.season, W.turn)).events);
+  if (win && WL.campaignWon(W.sec)) ev.push('O continente é dos jogadores. Campanha vencida!');
+  for (const m of ev) W.log.unshift({ t: W.turn, m });
+  W.log.length = Math.min(W.log.length, 14);
   saveLocalCampaign();
 }
-const worldNow = () => Date.now() + (WORLD.timeOffset || 0);
-function cellMission(o) { return MISSIONS.find(m => m.id === WL.missionOf(o.c, o.r, WORLD.season, worldNow())) || MISSIONS[0]; }
-const fmtMin = ms => { const t = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
-let campSel = null, campPending = null, campParty = 1;
-function drawCampaign() {
-  const cv = $('campCv'); if (!cv || !worldReady()) return;
-  const ctx = cv.getContext('2d'), S = cv.width, cs = S / WORLD.n;
+let campParty = 1;
+function drawCampaign(W) {
+  const cv = $(W.id + 'Cv'); if (!cv || !worldReady(W)) return;
+  const ctx = cv.getContext('2d'), S = cv.width, cs = S / GEO.n;
   ctx.clearRect(0, 0, S, S);
-  if (WORLD.img && WORLD.img.complete) ctx.drawImage(WORLD.img, 0, 0, S, S);
-  for (const o of WORLD.cells) {
-    const s = WORLD.sec.get(ckey(o)), f = WL.dominant(s), x = o.c * cs, y = o.r * cs, top = Math.max(s.h, s.i, s.r);
+  if (GEO.img && GEO.img.complete) ctx.drawImage(GEO.img, 0, 0, S, S);
+  const canAttack = net.role !== 'client';
+  for (const o of GEO.cells) {
+    const s = W.sec.get(ckey(o)), f = WL.dominant(s), x = o.c * cs, y = o.r * cs, top = Math.max(s.h, s.i, s.r) / 100;
     ctx.fillStyle = OWN[f].color + Math.round(34 + top * 0.5).toString(16).padStart(2, '0'); ctx.fillRect(x, y, cs, cs);
     ctx.strokeStyle = OWN[f].color + '88'; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, cs - 1, cs - 1);
-    if (s.h < 100 && (s.h > 0 || s.i < 100 && s.r < 100)) {          // barra de domínio do quadrado (humanos | insetos | robôs)
+    if (s.h < WL.SCALE && (s.h > 0 || s.i < WL.SCALE && s.r < WL.SCALE)) {          // barra de domínio do quadrado (humanos | insetos | robôs)
       let bx = x + 2; const bw = cs - 4, by = y + cs - 6;
-      for (const [v, c] of [[s.h, OWN.H.color], [s.i, OWN.I.color], [s.r, OWN.R.color]]) { if (!v) continue; ctx.fillStyle = c; ctx.fillRect(bx, by, bw * v / 100, 4); bx += bw * v / 100; }
+      for (const [v, c] of [[s.h, OWN.H.color], [s.i, OWN.I.color], [s.r, OWN.R.color]]) { if (!v) continue; ctx.fillStyle = c; ctx.fillRect(bx, by, bw * v / WL.SCALE, 4); bx += bw * v / WL.SCALE; }
     }
-    if (attackable(o) && net.role !== 'client') { ctx.strokeStyle = '#ffe14a'; ctx.lineWidth = 2; ctx.strokeRect(x + 3, y + 3, cs - 6, cs - 6); }
+    if (canAttack && attackable(W, o)) { ctx.strokeStyle = '#ffe14a'; ctx.lineWidth = 2; ctx.strokeRect(x + 3, y + 3, cs - 6, cs - 6); }
   }
-  if (campSel) { const x = campSel.c * cs, y = campSel.r * cs; ctx.strokeStyle = '#fff'; ctx.lineWidth = 4; ctx.strokeRect(x + 2, y + 2, cs - 4, cs - 4); }
+  if (W.sel) { const x = W.sel.c * cs, y = W.sel.r * cs; ctx.strokeStyle = '#fff'; ctx.lineWidth = 4; ctx.strokeRect(x + 2, y + 2, cs - 4, cs - 4); }
 }
-function renderCampaign() {
-  const pane = $('pane-camp'); if (!pane) return;
-  if (!worldReady()) { pane.innerHTML = `${subNav('camp')}<h2 class="sec">Campanha</h2><p style="color:var(--dim)">${AUTH.enabled && !net.connected ? 'Conectando ao mundo compartilhado…' : 'Carregando o mapa…'}</p>`; bindSubNav(pane); return; }
-  const total = WORLD.cells.length, count = f => { let n = 0; for (const s of WORLD.sec.values()) if (WL.dominant(s) === f) n++; return n; };
+function renderCampaign(W) {
+  const host = W.remote ? $('onlMap') : $('pane-camp'); if (!host) return;
+  const head = W.remote ? '' : subNav('camp');
+  if (!worldReady(W)) {
+    host.innerHTML = `${head}<h2 class="sec">${W.remote ? 'Mundo online' : 'Campanha'}</h2><p style="color:var(--dim)">${W.remote && !net.connected ? 'Conectando ao mundo compartilhado…' : 'Carregando o mapa…'}</p>`;
+    if (!W.remote) bindSubNav(host); return;
+  }
+  const total = GEO.cells.length, count = f => { let n = 0; for (const s of W.sec.values()) if (WL.dominant(s) === f) n++; return n; };
   const bar = f => { const n = count(f); return `<div class="cbar"><span style="color:${OWN[f].color}">${OWN[f].name}</span><div class="b"><i style="width:${(n / total * 100).toFixed(1)}%;background:${OWN[f].color}"></i></div><em>${n}</em></div>`; };
-  pane.innerHTML = `${subNav('camp')}
+  host.innerHTML = `${head}
     <div class="camp">
-      <div class="camp-map"><canvas id="campCv" width="900" height="900"></canvas>
+      <div class="camp-map"><canvas id="${W.id}Cv" width="900" height="900"></canvas>
         <div class="camp-leg"><span style="--c:${OWN.H.color}">Jogadores</span><span style="--c:${OWN.I.color}">Insetos</span><span style="--c:${OWN.R.color}">Robôs</span><span style="--c:#ffe14a">Pode atacar</span></div></div>
       <div class="camp-side">
-        <div class="camp-box"><h4>${WORLD.remote ? `Mundo compartilhado · temporada ${WORLD.season}` : 'Campanha local'} · turno ${WORLD.turn}</h4>${bar('H')}${bar('I')}${bar('R')}
+        <div class="camp-box"><h4>${W.remote ? `Mundo compartilhado · temporada ${W.season}` : 'Campanha local'} · turno ${W.turn}</h4>${bar('H')}${bar('I')}${bar('R')}
           <small>Um setor é dos humanos com 50% ou mais de domínio. Quanto mais território uma facção perde, mais forte ela fica: níveis baixos de ameaça são desativados
-            (insetos: nível ${campMinLevel('I')}+ · robôs: nível ${campMinLevel('R')}+).${WORLD.remote ? ` ${net.connected ? 'Conectado: as mudanças dos outros jogadores aparecem ao vivo.' : 'Reconectando ao servidor…'}` : ''}</small></div>
-        <div class="camp-box" id="campCell"></div>
-        <div class="camp-box"><h4>Notícias</h4><div class="camp-log">${WORLD.log.map(l => `<div>${WORLD.remote ? '' : `<i>T${l.t}</i> `}${l.m}</div>`).join('')}</div>
-          ${WORLD.remote ? '' : '<button class="btn ghost" id="campReset" style="margin-top:10px;padding:6px 14px;font-size:11px">Reiniciar campanha</button>'}</div>
+            (insetos: nível ${campMinLevel(W, 'I')}+ · robôs: nível ${campMinLevel(W, 'R')}+).${W.remote ? ` ${net.connected ? 'Conectado: as mudanças dos outros jogadores aparecem ao vivo.' : 'Reconectando ao servidor…'}` : ' Só você joga neste mapa; o progresso fica neste aparelho.'}</small></div>
+        <div class="camp-box" id="${W.id}Cell"></div>
+        <div class="camp-box"><h4>Notícias</h4><div class="camp-log">${W.log.map(l => `<div>${W.remote ? '' : `<i>T${l.t}</i> `}${l.m}</div>`).join('')}</div>
+          ${W.remote ? '' : '<button class="btn ghost" id="campReset" style="margin-top:10px;padding:6px 14px;font-size:11px">Reiniciar campanha</button>'}</div>
       </div>
     </div>`;
-  bindSubNav(pane);
-  const cv = $('campCv');
+  if (!W.remote) bindSubNav(host);
+  const cv = $(W.id + 'Cv');
   cv.onclick = e => {
     const rc = cv.getBoundingClientRect();
-    campSel = WORLD.idx.byKey.get(WL.key(Math.floor((e.clientX - rc.left) / (rc.width / WORLD.n)), Math.floor((e.clientY - rc.top) / (rc.height / WORLD.n)))) || null;
-    renderCampCell(); drawCampaign();
+    W.sel = GEO.idx.byKey.get(WL.key(Math.floor((e.clientX - rc.left) / (rc.width / GEO.n)), Math.floor((e.clientY - rc.top) / (rc.height / GEO.n)))) || null;
+    W.squads = []; renderCampCell(W); drawCampaign(W); requestSquads(W);
   };
-  if ($('campReset')) $('campReset').onclick = () => { if (confirm('Reiniciar a campanha? O mapa volta ao começo (créditos e melhorias ficam).')) { save.campaign = null; campSel = null; ensureLocalCampaign(); renderCampaign(); } };
-  renderCampCell(); drawCampaign();
+  if ($('campReset')) $('campReset').onclick = () => { if (confirm('Reiniciar a campanha local? O mapa volta ao começo (créditos e melhorias ficam).')) { save.campaign = null; WLOC.sel = null; ensureLocalCampaign(); renderCampaign(WLOC); } };
+  renderCampCell(W); drawCampaign(W); requestSquads(W);
 }
-function renderCampCell() {
-  const box = $('campCell'); if (!box) return;
-  const o = campSel;
+function requestSquads(W) { if (W.remote && W.sel && net.connected && !WL.isHuman(W.sec.get(ckey(W.sel)))) net.send({ t: 'sq:list', key: ckey(W.sel) }); }
+const esc = t => String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+function renderSquadList(W) {
+  const el = $(W.id + 'Squads'); if (!el) return;
+  if (!W.squads.length) { el.innerHTML = '<small style="color:var(--dim)">Nenhum esquadrão aberto neste setor agora.</small>'; return; }
+  el.innerHTML = W.squads.map(q => `<div class="sq-row"><span><b>${esc(q.host)}</b> · nível ${q.level} · ${esc((MISSIONS.find(m => m.id === q.mission) || {}).title || '')} · ${fmtTime(q.secs)}${q.friends ? ' · amigos' : ''}</span>
+    <i>${q.members}/${q.max}</i><button class="btn" data-sq="${q.id}" ${net.role === 'solo' || net.role === 'client' ? '' : 'disabled'} style="padding:6px 14px;font-size:11px">Entrar</button></div>`).join('');
+  el.querySelectorAll('[data-sq]').forEach(b => { b.onclick = () => { b.disabled = true; net.send({ t: 'sq:join', room: +b.dataset.sq, ver: net.version }); }; });
+}
+function renderCampCell(W) {
+  const box = $(W.id + 'Cell'); if (!box) return;
+  const o = W.sel;
   if (!o) { box.innerHTML = '<h4>Setor</h4><p style="color:var(--dim);margin:6px 0 0">Toque num quadrado do mapa. Os contornos amarelos são setores que você pode atacar.</p>'; return; }
-  const s = WORLD.sec.get(ckey(o)), f = WL.dominant(s), canPick = net.role !== 'client';
-  const pb = (lab, v, c) => `<div class="cbar"><span style="color:${c}">${lab}</span><div class="b"><i style="width:${v}%;background:${c}"></i></div><em>${v}%</em></div>`;
+  const s = W.sec.get(ckey(o)), f = WL.dominant(s), isClient = net.role === 'client';
+  const pb = (lab, v, c) => `<div class="cbar"><span style="color:${c}">${lab}</span><div class="b"><i style="width:${v / 100}%;background:${c}"></i></div><em style="width:60px">${WL.pct2(v)}</em></div>`;
   const head = `<h4>Setor ${cellName(o)} · <span style="color:${OWN[f].color}">${OWN[f].name}</span></h4><div class="tagrow2"><span class="tag">${BIOME_NAME[o.b]}</span></div>
     ${pb('Humanos', s.h, OWN.H.color)}${pb('Insetos', s.i, OWN.I.color)}${pb('Robôs', s.r, OWN.R.color)}`;
-  if (WL.isHuman(s)) { box.innerHTML = `${head}<p style="color:var(--dim)">Território dos jogadores (${s.h}%). Os inimigos podem tentar retomá-lo.</p>`; return; }
-  if (!attackable(o)) { box.innerHTML = `${head}<p style="color:var(--dim)">Fora de alcance. Domine um setor vizinho antes.</p>`; return; }
-  const ef = enemyOfCell(o), fac = OWN[ef].fac, m = cellMission(o), min = sectorMin(o), L = Math.min(LEVEL_MAX, Math.max(min, save.campLevel || min)), mix = WL.mixOf(s);
-  const offline = WORLD.remote && !net.connected;
+  if (WL.isHuman(s)) { box.innerHTML = `${head}<p style="color:var(--dim)">Território dos jogadores (${WL.pct2(s.h)}). Os inimigos podem tentar retomá-lo.</p>`; return; }
+  const squadsBox = W.remote ? `<h4 style="margin-top:12px">Esquadrões neste setor</h4><div id="${W.id}Squads"></div>` : '';
+  if (!attackable(W, o)) { box.innerHTML = `${head}<p style="color:var(--dim)">Fora de alcance. Domine um setor vizinho antes.</p>${squadsBox}`; renderSquadList(W); return; }
+  const ef = enemyOfCell(W, o), fac = OWN[ef].fac, m = cellMission(W, o), min = sectorMin(W, o), L = Math.min(LEVEL_MAX, Math.max(min, save.campLevel || min)), mix = WL.mixOf(s);
+  const offline = W.remote && (!net.connected || !AUTH.user), blockedLocal = !W.remote && net.role !== 'solo';
   box.innerHTML = `${head}${mix ? '<div class="frontier">⚔ FRONTEIRA: insetos e robôs estão neste mapa e lutam entre si antes de atacar você</div>' : ''}
-    <p>${mix ? 'Facções' : 'Defensor'}: <b style="color:${OWN[ef].color}">${mix ? 'Insetos × Robôs' : OWN[ef].name}</b> · Operação: <b>${FT2(m.title, fac)}</b> <small style="color:var(--dim)" id="campRot">· muda em ${fmtMin(WL.nextRotation(worldNow()) - worldNow())}</small><br><small style="color:var(--dim)">${FT2(m.desc, fac)}</small></p>
-    <div class="lvl"><div class="lvl-head"><small>NÍVEL DE AMEAÇA (mínimo ${min})</small><b id="cLv">${L}</b><i>${levelTag(L)}</i></div>
-      <div class="lvl-ctl"><button class="btn" id="cDn" ${canPick ? '' : 'disabled'}>−</button><input type="range" id="cRange" min="${min}" max="${LEVEL_MAX}" value="${L}" ${canPick ? '' : 'disabled'}><button class="btn" id="cUp" ${canPick ? '' : 'disabled'}>+</button></div></div>
-    <button class="btn primary" id="cGo" ${canPick && !missionBusy() && !offline ? '' : 'disabled'}>${!canPick ? 'Aguardando o host' : offline ? 'Reconectando…' : 'Atacar este setor'}</button>
-    <div id="campMsg" class="onlinemsg"></div>`;
-  const set = v => { v = Math.min(LEVEL_MAX, Math.max(min, v)); save.campLevel = v; persist(); $('cRange').value = v; $('cLv').textContent = v; };
-  $('cRange').oninput = e => set(+e.target.value); $('cDn').onclick = () => set(+$('cRange').value - 1); $('cUp').onclick = () => set(+$('cRange').value + 1);
-  $('cGo').onclick = async () => {
-    if (fac === 'bots' && !botsReady()) { $('cGo').disabled = true; $('cGo').textContent = 'Carregando robôs…'; try { await loadBots(); } catch { /* usa o modelo simples */ } }
-    const h = WL.hash2(o.c, o.r), level = +$('cRange').value;
-    const opts = { cell: ckey(o), faction: fac, biome: o.b, R: 80 + (h % 40), rocks: 35 + (h >> 4) % 45, mix };
-    if (!WORLD.remote) return startMission(m.id, level, opts);
-    $('cGo').disabled = true; campPending = { m, level, opts }; net.campStart(opts.cell, level);       // o servidor confirma antes de começar
-    setTimeout(() => { if (campPending) { campPending = null; renderCampCell(); } }, 8000);
+    <p>${mix ? 'Facções' : 'Defensor'}: <b style="color:${OWN[ef].color}">${mix ? 'Insetos × Robôs' : OWN[ef].name}</b> · Operação: <b>${FT2(m.title, fac)}</b> <small style="color:var(--dim)" id="${W.id}Rot">· muda em ${fmtMin(WL.nextRotation(worldNow(W)) - worldNow(W))}</small><br><small style="color:var(--dim)">${FT2(m.desc, fac)}</small></p>
+    <div class="lvl"><div class="lvl-head"><small>NÍVEL DE AMEAÇA (mínimo ${min})</small><b id="${W.id}Lv">${L}</b><i>${levelTag(L)}</i></div>
+      <div class="progline" id="${W.id}Prog"></div>
+      <div class="lvl-ctl"><button class="btn" id="${W.id}Dn" ${isClient ? 'disabled' : ''}>−</button><input type="range" id="${W.id}Range" min="${min}" max="${LEVEL_MAX}" value="${L}" ${isClient ? 'disabled' : ''}><button class="btn" id="${W.id}Up" ${isClient ? 'disabled' : ''}>+</button></div></div>
+    ${W.remote ? `<div class="set-row" style="padding:8px 0"><div><b style="font-size:12px">Esquadrão</b><small>Quem pode entrar enquanto você joga</small></div>
+      <select id="${W.id}Policy" class="field" style="width:auto;font-size:12px;padding:6px 8px"><option value="open">Aberto</option><option value="friends">Só amigos</option><option value="closed">Fechado</option></select></div>` : ''}
+    <button class="btn primary" id="${W.id}Go" ${!isClient && !missionBusy() && !offline && !blockedLocal ? '' : 'disabled'}>${isClient ? 'Aguardando o host' : offline ? (AUTH.user ? 'Reconectando…' : 'Entre para jogar online') : blockedLocal ? 'Saia da sala online primeiro' : 'Atacar este setor'}</button>
+    <div id="${W.id}Msg" class="onlinemsg"></div>${squadsBox}`;
+  const rng = $(W.id + 'Range');
+  const prog = v => { $(W.id + 'Prog').innerHTML = `Progresso da vitória: <b>+${WL.pct2(WL.missionGain(m.id, v))}</b> do setor <small>(base ${WL.MISSION_POINTS[m.id]} + nível ${v}; 1 ponto = 0,01%)</small>`; };
+  const set = v => { v = Math.min(LEVEL_MAX, Math.max(min, v)); save.campLevel = v; persist(); rng.value = v; $(W.id + 'Lv').textContent = v; prog(v); };
+  prog(L);
+  rng.oninput = e => set(+e.target.value); $(W.id + 'Dn').onclick = () => set(+rng.value - 1); $(W.id + 'Up').onclick = () => set(+rng.value + 1);
+  if ($(W.id + 'Policy')) { $(W.id + 'Policy').value = squadPolicy; $(W.id + 'Policy').onchange = e => { squadPolicy = e.target.value; if (net.role === 'host') net.send({ t: 'sq:policy', policy: squadPolicy }); }; }
+  const go = $(W.id + 'Go');
+  go.onclick = async () => {
+    if (fac === 'bots' || mix) { if (!botsReady()) { go.disabled = true; go.textContent = 'Carregando robôs…'; try { await loadBots(); } catch { /* usa o modelo simples */ } } }
+    const h = WL.hash2(o.c, o.r), level = +rng.value;
+    const opts = { cell: ckey(o), faction: fac, biome: o.b, R: 80 + (h % 40), rocks: 35 + (h >> 4) % 45, mix, remote: W.remote };
+    if (!W.remote) return startMission(m.id, level, opts);
+    const msg = t => { const el = $(W.id + 'Msg'); if (el) el.textContent = t; };
+    go.disabled = true;
+    if (net.role === 'solo') { try { msg('Criando esquadrão…'); await net.host(myName()); } catch (e) { msg(e.message || 'Falha ao criar o esquadrão.'); go.disabled = false; return; } }
+    net.send({ t: 'sq:policy', policy: squadPolicy });
+    W.pending = { m, level, opts }; net.campStart(opts.cell, level);       // o servidor confirma e escolhe a missão antes de começar
+    setTimeout(() => { if (W.pending) { W.pending = null; renderCampCell(W); } }, 8000);
   };
+  if (W.remote) renderSquadList(W);
 }
+let squadPolicy = 'open';
 net.onCamp = msg => {
-  if (msg.t === 'campErr') { campPending = null; renderCampCell(); const el = $('campMsg'); if (el) el.textContent = msg.msg; return; }
-  if (msg.t === 'campOk' && campPending) {
-    const p = campPending; campPending = null; p.opts.faction = msg.faction === 'I' ? 'bugs' : 'bots'; p.opts.mix = msg.mix || null;
+  const W = WNET;
+  if (msg.t === 'campErr') { W.pending = null; renderCampCell(W); const el = $('onlMsg'); if (el) el.textContent = msg.msg; toast(msg.msg, { error: true }); return; }
+  if (msg.t === 'campOk' && W.pending) {
+    const p = W.pending; W.pending = null; p.opts.faction = msg.faction === 'I' ? 'bugs' : 'bots'; p.opts.mix = msg.mix || null;
     startMission(msg.mission || p.m.id, msg.level, p.opts);                       // quem manda na missão é o servidor
   }
 };
 net.onWorld = applyServerWorld;
 let rotEpoch = -1;
 setInterval(() => {                                      // contagem para a próxima troca de missão; ao virar o ciclo, redesenha o painel
-  if (!worldReady()) return;
-  const ep = WL.epochOf(worldNow());
-  if (rotEpoch !== -1 && ep !== rotEpoch && $('pane-camp') && $('pane-camp').classList.contains('on') && !campPending) renderCampCell();
-  rotEpoch = ep;
-  const el = $('campRot'); if (el) el.textContent = `· muda em ${fmtMin(WL.nextRotation(worldNow()) - worldNow())}`;
+  for (const W of [WLOC, WNET]) {
+    if (!worldReady(W)) continue;
+    const ep = WL.epochOf(worldNow(W));
+    if (W === WLOC && rotEpoch !== -1 && ep !== rotEpoch && $('pane-camp') && $('pane-camp').classList.contains('on')) renderCampCell(W);
+    if (W === WNET && W.epoch !== undefined && ep !== W.epoch && onlineTabIsMap() && !W.pending) renderCampCell(W);
+    if (W === WLOC) rotEpoch = ep; else W.epoch = ep;
+    const el = $(W.id + 'Rot'); if (el) el.textContent = `· muda em ${fmtMin(WL.nextRotation(worldNow(W)) - worldNow(W))}`;
+  }
 }, 1000);
-function FT2(str, fac) { const keep = curFaction; curFaction = fac; const r = FT(str); curFaction = keep; return r; }
+setInterval(() => { if (onlineTabIsMap() && WNET.sel) requestSquads(WNET); }, 5000);
+
+// ───────────── avisos na tela ─────────────
+function toast(text, o = {}) {
+  let box = $('toasts'); if (!box) { box = document.createElement('div'); box.id = 'toasts'; document.body.appendChild(box); }
+  const el = document.createElement('div'); el.className = 'toast' + (o.error ? ' err' : '');
+  const span = document.createElement('span'); span.textContent = text; el.appendChild(span);
+  const close = () => { el.remove(); };
+  for (const [label, fn] of (o.buttons || [])) { const b = document.createElement('button'); b.textContent = label; b.onclick = () => { fn(); close(); }; el.appendChild(b); }
+  box.appendChild(el); setTimeout(close, o.ms || 7000);
+  while (box.children.length > 4) box.firstChild.remove();
+}
+
+// ───────────── amigos, bloqueios e convites ─────────────
+let FR = { friends: [], incoming: [], outgoing: [], blocked: [] };
+net.onSocial = m => {
+  switch (m.t) {
+    case 'f:lists': FR = { friends: m.friends, incoming: m.incoming, outgoing: m.outgoing, blocked: m.blocked }; renderOnline(); break;
+    case 'f:notice':
+      if (m.kind === 'request') toast(`${m.from.name} quer ser seu amigo.`, { ms: 15000, buttons: [['Aceitar', () => net.send({ t: 'f:accept', id: m.from.id })], ['Recusar', () => net.send({ t: 'f:decline', id: m.from.id })]] });
+      else toast(`${m.from.name} agora é seu amigo!`);
+      break;
+    case 'f:ok': toast(m.msg); break;
+    case 'f:err': toast(m.msg, { error: true }); { const el = $('onlineMsg'); if (el) el.textContent = m.msg; } break;
+    case 'f:pres': net.send({ t: 'f:list' }); if (m.online) toast(`${m.name} ficou online.`, { ms: 3500 }); break;
+    case 'sq:list': if (WNET.sel && m.key === ckey(WNET.sel)) { WNET.squads = m.squads; renderSquadList(WNET); } break;
+    case 'sq:policy': squadPolicy = m.policy; break;
+    case 'sq:invite':
+      toast(`${m.from} convidou você para um esquadrão (${m.members}/${m.max}).`, { ms: m.secs * 1000, buttons: [['Entrar', () => { if (net.role !== 'solo') { toast('Saia do seu esquadrão atual antes.', { error: true }); return; } net.send({ t: 'sq:accept', inviteId: m.inviteId, ver: net.version }); }], ['Recusar', () => net.send({ t: 'sq:decline', inviteId: m.inviteId })]] });
+      beep(660, 0.12, 0.08); break;
+  }
+};
+function renderFriends(el) {
+  const row = (f, btns) => `<div class="fr-row"><span class="dot ${f.online ? 'on' : ''}"></span><b>${esc(f.name)}</b><em>${f.online ? (f.squad ? `em operação ${f.squad.sector ? WL.cellName(...f.squad.sector.split(',').map(Number)) : '(sala)'} · ${f.squad.members}/${f.squad.max}` : 'no menu') : 'offline'}</em><span class="fr-btns">${btns}</span></div>`;
+  const b = (act, id, label, cls = '') => `<button class="btn ${cls}" data-fa="${act}" data-id="${id}" style="padding:5px 12px;font-size:11px;letter-spacing:1px">${label}</button>`;
+  const inRoom = net.role !== 'solo';
+  el.innerHTML = `
+    <div class="camp-box" style="max-width:760px"><h4>Adicionar amigo</h4>
+      <div style="display:flex;gap:8px"><input class="field" id="frName" maxlength="20" placeholder="nome de usuário exato" autocomplete="off" autocapitalize="none" spellcheck="false"><button class="btn primary" id="frAdd">Enviar pedido</button></div>
+      <small>O outro jogador precisa aceitar. Você pode bloquear quem incomodar.</small></div>
+    ${FR.incoming.length ? `<div class="camp-box" style="max-width:760px;margin-top:12px"><h4>Pedidos recebidos</h4>${FR.incoming.map(f => row({ ...f, online: false }, b('f:accept', f.id, 'Aceitar', 'primary') + b('f:decline', f.id, 'Recusar') + b('f:block', f.id, 'Bloquear', 'ghost')).replace('<em>offline</em>', '<em>quer ser seu amigo</em>')).join('')}</div>` : ''}
+    <div class="camp-box" style="max-width:760px;margin-top:12px"><h4>Amigos (${FR.friends.length})</h4>
+      ${FR.friends.length ? FR.friends.slice().sort((a, c) => (c.online - a.online) || a.name.localeCompare(c.name)).map(f => row(f,
+        (f.online && inRoom && !(f.squad && f.squad.id && net.roster.some(p => p.name === f.name)) ? b('sq:invite', f.id, 'Convidar') : '') +
+        (f.online && f.squad && net.role === 'solo' && !f.squad.locked && f.squad.members < f.squad.max && f.squad.policy !== 'closed' ? b('sq:joinf', f.squad.id, 'Entrar no esquadrão', 'primary') : '') +
+        b('f:remove', f.id, 'Remover') + b('f:block', f.id, 'Bloquear', 'ghost'))).join('') : '<small>Você ainda não tem amigos. Envie um pedido acima.</small>'}</div>
+    ${FR.outgoing.length ? `<div class="camp-box" style="max-width:760px;margin-top:12px"><h4>Pedidos enviados</h4>${FR.outgoing.map(f => row({ ...f, online: false }, b('f:cancel', f.id, 'Cancelar')).replace('<em>offline</em>', '<em>aguardando</em>')).join('')}</div>` : ''}
+    ${FR.blocked.length ? `<div class="camp-box" style="max-width:760px;margin-top:12px"><h4>Bloqueados</h4>${FR.blocked.map(f => row({ ...f, online: false }, b('f:unblock', f.id, 'Desbloquear')).replace('<em>offline</em>', '')).join('')}</div>` : ''}`;
+  const add = () => { const n = $('frName').value.trim(); if (n) { net.send({ t: 'f:add', name: n }); $('frName').value = ''; } };
+  $('frAdd').onclick = add; $('frName').onkeydown = e => { if (e.key === 'Enter') add(); };
+  el.querySelectorAll('[data-fa]').forEach(btn => {
+    btn.onclick = () => {
+      const act = btn.dataset.fa, id = +btn.dataset.id;
+      if (act === 'sq:joinf') net.send({ t: 'sq:join', room: id, ver: net.version });
+      else if (act === 'f:block') { if (confirm('Bloquear este usuário? Ele não poderá mais enviar pedidos nem entrar nos seus esquadrões.')) net.send({ t: act, id }); }
+      else if (act === 'f:remove') { if (confirm('Remover este amigo?')) net.send({ t: act, id }); }
+      else net.send({ t: act, id });
+    };
+  });
+}
 
 // ───────────── login ─────────────
 async function api(path, body) {
@@ -1717,22 +1810,35 @@ async function api(path, body) {
   if (!r.ok) throw new Error(j.error || 'Falha de comunicação com o servidor.');
   return j;
 }
-function showAuth(msg) {
+let authThen = null;
+function updateWho() {
+  $('who').style.display = AUTH.enabled ? '' : 'none';
+  $('whoName').textContent = AUTH.user ? AUTH.user.name : 'visitante';
+  $('logout').style.display = AUTH.user ? '' : 'none';
+  $('loginBtn').style.display = AUTH.user ? 'none' : '';
+}
+function showAuth(msg, then) {
+  authThen = then || null;
   $('auth').classList.add('on'); $('authMsg').textContent = msg || ''; $('authMsg').classList.toggle('err', !!msg);
-  $('who').style.display = 'none';
 }
 function startSession(user) {
-  AUTH.user = user; $('auth').classList.remove('on');
-  $('whoName').textContent = user.name; $('who').style.display = '';
+  AUTH.user = user; $('auth').classList.remove('on'); updateWho();
   setNameTag(playerGroup, myName());
   net.kicked = false; net.connect().catch(() => {});
-  loadWorld(); renderAll();
+  renderAll();
+  if (authThen) { const t = authThen; authThen = null; showTab(t); }
 }
 async function bootAuth() {
   try { AUTH.enabled = !!(await (await fetch('/api/config', { cache: 'no-store' })).json()).auth; } catch { AUTH.enabled = false; }
-  if (!AUTH.enabled) { $('who').style.display = 'none'; return loadWorld(); }
+  updateWho();
+  loadWorld();
+  if (!AUTH.enabled) return;
   try { const r = await fetch('/api/me', { cache: 'no-store', credentials: 'same-origin' }); if (r.ok) return startSession((await r.json()).user); } catch { /* sem rede */ }
-  showAuth();
+}
+function dropSession(msg) {
+  net.disconnect(); AUTH.user = null; WNET.sec = new Map(); WNET.sel = null; FR = { friends: [], incoming: [], outgoing: [], blocked: [] };
+  if (campaignRemote && (state === 'playing' || state === 'paused')) abortMission();
+  clearOthers(); updateWho(); renderAll(); if (msg) toast(msg, { error: true, ms: 9000 });
 }
 function bindAuthUi() {
   let mode = 'login';
@@ -1756,13 +1862,16 @@ function bindAuthUi() {
     $('authGo').disabled = false;
   };
   $('authForm').onsubmit = go;
-  $('logout').onclick = async () => { try { await api('/api/logout', {}); } catch { /* ok */ } net.disconnect(); AUTH.user = null; WORLD.sec = new Map(); WORLD.remote = false; if (state === 'playing' || state === 'paused') abortMission(); showAuth(); };
-  net.onKicked = () => { AUTH.user = null; net.disconnect(); if (state === 'playing' || state === 'paused') abortMission(); showAuth('Sua conta foi aberta em outro lugar.'); };
+  $('authClose').onclick = () => { $('auth').classList.remove('on'); authThen = null; };
+  $('loginBtn').onclick = () => showAuth('', 'online');
+  $('logout').onclick = async () => { try { await api('/api/logout', {}); } catch { /* ok */ } dropSession(); showTab('home'); };
+  net.onKicked = () => { dropSession('Sua conta foi aberta em outro lugar.'); showAuth('Sua conta foi aberta em outro lugar.'); };
   let chk = 0;
   net.onConn = ok => {                                        // conexão caiu: confere se a sessão ainda vale (pode ter expirado)
     if (!AUTH.user) return;
-    if ($('pane-camp') && $('pane-camp').classList.contains('on')) renderCampaign();
-    if (!ok && Date.now() - chk > 10000) { chk = Date.now(); fetch('/api/me', { cache: 'no-store', credentials: 'same-origin' }).then(r => { if (r.status === 401) { net.disconnect(); AUTH.user = null; showAuth('Sua sessão expirou. Entre de novo.'); } }).catch(() => {}); }
+    if (ok) net.send({ t: 'f:list' });
+    if (onlineTabIsMap()) renderCampaign(WNET);
+    if (!ok && Date.now() - chk > 10000) { chk = Date.now(); fetch('/api/me', { cache: 'no-store', credentials: 'same-origin' }).then(r => { if (r.status === 401) { dropSession('Sua sessão expirou. Entre de novo.'); showAuth('Sua sessão expirou. Entre de novo.', 'online'); } }).catch(() => {}); }
   };
   setMode('login');
 }
@@ -1801,9 +1910,9 @@ function presentResults(r) {
   save.credits += r.credits;
   if (r.win) { save.cleared = save.cleared || {}; save.cleared[r.mid] = Math.max(save.cleared[r.mid] || 0, (mission && mission.level) || 1); }
   if (campaignCell) {
-    if (WORLD.remote) { if (net.role !== 'client') net.campEnd(r.win); }          // o servidor aplica no mundo compartilhado
+    if (campaignRemote) { if (net.role !== 'client') net.campEnd(r.win); }        // o servidor aplica no mundo compartilhado
     else campaignResult(campaignCell, r.win, (mission && mission.level) || 1, campParty);
-    campaignCell = null;
+    campaignCell = null; campaignRemote = false;
   }
   const prev = save.best[r.mid];
   const record = r.win && (prev == null || r.total > prev);
@@ -2020,13 +2129,14 @@ function renderKeys() {
 function renderAll() {
   $('credits').textContent = save.credits;
   if (state === 'menu' || state === 'ended') curFaction = selFaction;
-  renderHome(); renderCampaign(); renderOps(); renderOnline(); renderArsenal(); renderUpgrades(); renderSettings(); renderKeys();
+  renderHome(); renderCampaign(WLOC); renderOps(); renderOnline(); renderArsenal(); renderUpgrades(); renderSettings(); renderKeys();
 }
 function showTab(id) {
   activeTab = id;
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === (SUB_OF[id] || id)));
   $('menu').classList.toggle('is-home', id === 'home');
-  if (id === 'camp') renderCampaign();
+  if (id === 'camp') renderCampaign(WLOC);
+  if (id === 'online') renderOnline(true);
   document.querySelectorAll('.pane').forEach(p => p.classList.toggle('on', p.id === 'pane-' + id));
 }
 function buildMenu() {
@@ -3020,14 +3130,24 @@ function onClientMessage(from, d) {
   }
 }
 net.onMessage = (from, d) => { if (net.role === 'host') onHostMessage(from, d); else if (net.role === 'client') onClientMessage(from, d); };
+function sendLateStart(id) {                       // alguém entrou no esquadrão com a operação em andamento
+  const o = ensureOther(id), at = spawnRing(player.pos.clone().setY(0), 1 + Object.keys(others).length);
+  o.status = 'alive'; o.pos.copy(at); o.tp.copy(at); o.seen = 0; o.last = null; o.bd = false; o.st = {}; o.group.visible = true;
+  net.to(id, { ...startBase, spawn: { [id]: [r1(at.x), r1(at.z), r2(player.yaw)] }, lives: mission.livesLeft || 0, mods: [mods.hp, mods.count, mods.speed, mods.edmg, mods.elite] });
+  lateSent.add(id); say(`${rosterName(id)} entrou no esquadrão!`, 2.5);
+}
 net.onRoster = () => {
+  if (net.role === 'host' && startBase && mission && missionBusy()) {
+    const np = net.roster.length; party = { hp: 1 + 0.45 * (np - 1), count: 1 + 0.5 * (np - 1), dmg: 1 + 0.08 * (np - 1) };   // a escala invisível acompanha o esquadrão
+    for (const p of net.roster) if (p.id !== net.id && !lateSent.has(p.id)) sendLateStart(p.id);
+  }
   const ids = new Set(net.roster.map(p => p.id));
   for (const id of Object.keys(others)) if (!ids.has(+id)) removeOther(+id);
   for (const p of net.roster) { const o = others[p.id]; if (o && o.name !== p.name) { o.name = p.name; setNameTag(o.group, p.name); } }
   renderOnline(); renderOps();
   if (!missionBusy() && state !== 'ended') $('sub').textContent = net.role === 'solo' ? 'Pronto para o deploy.' : `Sala ${net.code} · ${net.roster.length} jogador(es)`;
 };
-net.onLeft = id => { removeOther(id); delete respawnTimers[id]; };
+net.onLeft = id => { removeOther(id); delete respawnTimers[id]; lateSent.delete(id); };
 net.onClosed = msg => {
   if (missionBusy() || uiOpen) { finishMission(); clearWorld(); }
   clearOthers(); state = state === 'ended' ? 'ended' : 'menu';
@@ -3039,7 +3159,7 @@ function clientStartMission(d) {
   ensureAudio();
   if (missionBusy()) { clearWorld(); }
   relax = !!d.relax;
-  campaignCell = d.cell || null; mixFac = null; clientMixed = false;
+  campaignCell = d.cell || null; campaignRemote = !!d.remote; mixFac = null; clientMixed = false;
   curFaction = d.faction === 'bots' ? 'bots' : 'bugs';
   loadBots().catch(() => {});
   if (curFaction === 'bots') loadBots().catch(() => {});
@@ -3073,27 +3193,53 @@ function updateParty(dt) {
     return `<div class="pm ${o.st.dd ? 'dead' : ''}"><b>${o.name}</b><div class="meter"><i style="width:${pct}%"></i></div></div>`;
   }).join('');
 }
-function renderOnline() {
+let onlTab = 'map';
+const onlineTabIsMap = () => !!$('onlMap') && $('pane-online').classList.contains('on');
+function squadBar() {
+  if (net.role === 'solo') return '';
+  const members = net.roster.map(p => `<span class="sq-m">${p.host ? '★ ' : ''}${esc(p.name)}${p.id === net.id ? ' (você)' : ''}</span>`).join('');
+  return `<div class="squadbar"><div><small>${net.role === 'host' ? 'SEU ESQUADRÃO' : 'ESQUADRÃO DE ' + esc((net.roster.find(p => p.host) || {}).name || '')} · ${net.roster.length}/4 · código ${net.code}</small><div>${members}</div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${net.role === 'host' && AUTH.user ? `<select id="sqPolicy" class="field" style="width:auto;font-size:12px;padding:6px 8px" title="Quem pode entrar"><option value="open">Aberto</option><option value="friends">Só amigos</option><option value="closed">Fechado</option></select>` : ''}
+    <button class="btn ghost" id="leaveBtn" style="padding:7px 16px;font-size:12px">Sair do esquadrão</button></div></div>`;
+}
+function renderOnline(force) {
   const pane = $('pane-online'); if (!pane) return;
+  if (!force && pane.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') return;
+  if (AUTH.enabled && !AUTH.user) {
+    pane.innerHTML = `<h2 class="sec">Modo online</h2><div class="camp-box" style="max-width:560px"><h4>Entre para jogar online</h4>
+      <p>No modo online todos os jogadores disputam o <b>mesmo mapa</b>: cada setor mostra a porcentagem de domínio e muda ao vivo. Você pode jogar sozinho ou entrar no esquadrão de outras pessoas,
+      adicionar amigos e convidá-los. Só precisa de usuário e senha.</p><button class="btn primary" id="onlLogin">Entrar ou criar conta</button></div>`;
+    $('onlLogin').onclick = () => showAuth('', 'online'); return;
+  }
+  const curTab = AUTH.enabled ? onlTab : 'code';
+  const tabs = AUTH.enabled ? [['map', 'MAPA ONLINE'], ['friends', 'AMIGOS' + (FR.incoming.length ? ` (${FR.incoming.length})` : '')], ['code', 'SALA POR CÓDIGO']] : [['code', 'SALA POR CÓDIGO']];
+  pane.innerHTML = `<div class="subnav">${tabs.map(([id, l]) => `<button data-ot="${id}" class="${id === curTab ? 'on' : ''}">${l}</button>`).join('')}</div>${squadBar()}<div id="onlBody"></div><div id="onlineMsg" class="onlinemsg"></div>`;
+  pane.querySelectorAll('[data-ot]').forEach(b => { b.onclick = () => { onlTab = b.dataset.ot; renderOnline(true); }; });
+  if ($('leaveBtn')) $('leaveBtn').onclick = () => { net.leave(); clearOthers(); $('sub').textContent = 'Pronto para o deploy.'; renderAll(); showTab('online'); };
+  if ($('sqPolicy')) { $('sqPolicy').value = squadPolicy; $('sqPolicy').onchange = e => { squadPolicy = e.target.value; net.send({ t: 'sq:policy', policy: squadPolicy }); }; }
+  const body = $('onlBody');
+  if (curTab === 'map') { body.innerHTML = '<div id="onlMap"></div>'; renderCampaign(WNET); }
+  else if (curTab === 'friends') renderFriends(body);
+  else renderCodeRooms(body);
+}
+function renderCodeRooms(el) {
   const inRoom = net.role !== 'solo';
-  const roster = net.roster.map(p => `<div class="pm-row"><span>${p.host ? '★ ' : ''}${p.name}${p.id === net.id ? ' (você)' : ''}</span><i>${p.host ? 'HOST' : 'JOGADOR'}</i></div>`).join('');
-  pane.innerHTML = `
-    <h2 class="sec">Jogo online · até 4 jogadores · só entra quem tem o código do host</h2>
+  const roster = net.roster.map(p => `<div class="pm-row"><span>${p.host ? '★ ' : ''}${esc(p.name)}${p.id === net.id ? ' (você)' : ''}</span><i>${p.host ? 'HOST' : 'JOGADOR'}</i></div>`).join('');
+  el.innerHTML = `
+    <h2 class="sec">Sala por código · até 4 jogadores · só entra quem tem o código do host</h2>
     <div class="grid">
       <div class="card">
         <small class="k">PERFIL</small><h4>Seu nome</h4>
-        <p>${AUTH.user ? 'Seu nome de usuário aparece sobre a sua cabeça. ' : 'Aparece sobre a sua cabeça para os outros jogadores. '}Créditos, melhorias e recordes ficam salvos <b>só neste aparelho</b>${AUTH.user ? '; o mapa da guerra é compartilhado por todos' : ''}.</p>
-        ${AUTH.user ? `<b style="color:var(--accent);letter-spacing:2px">${AUTH.user.name}</b>` : `<input class="field" id="nameIn" maxlength="16" placeholder="Seu nome" value="${(save.name || '').replace(/"/g, '')}" ${inRoom ? 'disabled' : ''}>`}
+        <p>${AUTH.user ? 'Seu nome de usuário aparece sobre a sua cabeça. ' : 'Aparece sobre a sua cabeça para os outros jogadores. '}Créditos, melhorias e recordes ficam salvos <b>só neste aparelho</b>${AUTH.user ? '; o mapa online é compartilhado por todos' : ''}.</p>
+        ${AUTH.user ? `<b style="color:var(--accent);letter-spacing:2px">${esc(AUTH.user.name)}</b>` : `<input class="field" id="nameIn" maxlength="16" placeholder="Seu nome" value="${(save.name || '').replace(/"/g, '')}" ${inRoom ? 'disabled' : ''}>`}
       </div>
       ${inRoom ? `
       <div class="card">
         <small class="k">${net.role === 'host' ? 'VOCÊ É O HOST' : 'CONECTADO'}</small><h4>Sala</h4>
         <div class="roomcode" id="roomCode">${net.code}</div>
-        <p>${net.role === 'host' ? 'Passe este código aos amigos. Depois escolha a operação na aba OPERAÇÕES.' : 'Aguarde o host iniciar a operação.'}</p>
+        <p>${net.role === 'host' ? 'Passe este código aos amigos. Depois escolha a operação em PARTIDA LIVRE (ou ataque um setor no MAPA ONLINE).' : 'Aguarde o host iniciar a operação.'}</p>
         <div class="pm-list">${roster}</div>
-        <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
-          ${net.role === 'host' ? '<button class="btn" id="copyBtn">Copiar código</button>' : ''}
-          <button class="btn ghost" id="leaveBtn">Sair da sala</button></div>
+        <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">${net.role === 'host' ? '<button class="btn" id="copyBtn">Copiar código</button>' : ''}</div>
       </div>` : `
       <div class="card">
         <small class="k">HOST</small><h4>Criar sala</h4>
@@ -3106,9 +3252,8 @@ function renderOnline() {
         <input class="field code" id="codeIn" maxlength="5" placeholder="ABCDE">
         <button class="btn primary" id="joinBtn" style="margin-top:10px">Entrar</button>
       </div>`}
-    </div>
-    <div id="onlineMsg" class="onlinemsg"></div>`;
-  const msg = t => { const el = $('onlineMsg'); if (el) el.textContent = t; };
+    </div>`;
+  const msg = t => { const e2 = $('onlineMsg'); if (e2) e2.textContent = t; };
   const nm = $('nameIn');
   if (nm) nm.oninput = () => { save.name = nm.value.replace(/[<>]/g, '').slice(0, 16); persist(); setNameTag(playerGroup, myName()); };
   const doRoom = async fn => {
@@ -3120,7 +3265,6 @@ function renderOnline() {
   if ($('hostBtn')) $('hostBtn').onclick = () => doRoom(() => net.host(myName()));
   if ($('joinBtn')) $('joinBtn').onclick = () => doRoom(() => net.join(($('codeIn').value || '').trim().toUpperCase(), myName()));
   if ($('codeIn')) $('codeIn').oninput = e => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); };
-  if ($('leaveBtn')) $('leaveBtn').onclick = () => { net.leave(); clearOthers(); $('sub').textContent = 'Pronto para o deploy.'; renderAll(); showTab('online'); };
   if ($('copyBtn')) $('copyBtn').onclick = () => { try { navigator.clipboard.writeText(net.code); msg('Código copiado!'); } catch { msg('Código: ' + net.code); } };
 }
 
@@ -3235,7 +3379,7 @@ loop();
 
 // Gancho para testes automatizados e futuro multiplayer (estado serializável)
 window.__freedivers = window.__multipunk = {
-  get save() { return save; }, WORLD, AUTH, WL, campaignResult, campMinLevel, attackable, cellMission, missionUnlocked, get party() { return party; },
+  get save() { return save; }, WLOC, WNET, GEO, AUTH, WL, FR: () => FR, campaignResult, campMinLevel, attackable, cellMission, missionUnlocked, get party() { return party; }, toast,
   player, keys, tick, startMission, setFaction, settings, get curFaction() { return curFaction; }, loadBots, botsReady,
   get enemies() { return enemies; }, get state() { return state; }, get kills() { return kills; },
   get mission() { return mission; }, setMouse(v) { mouseDown = v; },

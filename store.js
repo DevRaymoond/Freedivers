@@ -15,7 +15,22 @@ function pgStore(url) {
   const user = r => r && { id: Number(r.id), username: r.username, hash: r.password_hash, failed: r.failed_logins, lockedUntil: r.locked_until ? new Date(r.locked_until).getTime() : 0 };
   return {
     kind: 'postgres',
-    async init() { await q('select 1'); },
+    async init() {
+      await q('select 1');
+      // migração: o mundo guardava % inteiras (soma 100); agora são centésimos de % (soma 10000, 1 ponto = 0,01%)
+      const old = await q('select 1 from world_sectors where human + insect + robot = 100 limit 1');
+      if (old.rowCount) {
+        const c = await pool.connect();
+        try {
+          await c.query('begin');
+          await c.query(`do $$ declare k record; begin for k in select conname from pg_constraint where conrelid = 'world_sectors'::regclass and contype = 'c' loop execute format('alter table world_sectors drop constraint %I', k.conname); end loop; end $$`);
+          await c.query('update world_sectors set human = human * 100, insect = insect * 100, robot = robot * 100');
+          await c.query('alter table world_sectors add constraint ws_range check (human between 0 and 10000 and insect between 0 and 10000 and robot between 0 and 10000), add constraint ws_sum check (human + insect + robot = 10000)');
+          await c.query(`update world_meta set value = jsonb_build_object('i', (value->>'i')::bigint * 100, 'r', (value->>'r')::bigint * 100) where key = 'init'`);
+          await c.query('commit'); console.log('[db] mundo migrado para a escala de 0,01%.');
+        } catch (e) { await c.query('rollback').catch(() => {}); throw e; } finally { c.release(); }
+      }
+    },
     async close() { await pool.end(); },
     // contas
     async createUser(username, hash) {
@@ -60,6 +75,36 @@ function pgStore(url) {
         await c.query('commit');
       } catch (e) { await c.query('rollback').catch(() => {}); throw e; } finally { c.release(); }
     },
+    // amizades e bloqueios
+    async friendLists(me) {
+      const f = (await q(`select f.status, f.requester_id, u.id, u.username from friendships f
+        join users u on u.id = case when f.requester_id = $1 then f.addressee_id else f.requester_id end
+        where f.requester_id = $1 or f.addressee_id = $1`, [me])).rows;
+      const out = { friends: [], incoming: [], outgoing: [], blocked: [] };
+      for (const r of f) { const o = { id: Number(r.id), name: r.username }; if (r.status === 'accepted') out.friends.push(o); else if (Number(r.requester_id) === me) out.outgoing.push(o); else out.incoming.push(o); }
+      out.blocked = (await q('select u.id, u.username from blocks b join users u on u.id = b.blocked_id where b.blocker_id = $1', [me])).rows.map(r => ({ id: Number(r.id), name: r.username }));
+      return out;
+    },
+    async isBlocked(a, b) { return (await q('select 1 from blocks where (blocker_id = $1 and blocked_id = $2) or (blocker_id = $2 and blocked_id = $1) limit 1', [a, b])).rowCount > 0; },
+    async blockedByMe(me, other) { return (await q('select 1 from blocks where blocker_id = $1 and blocked_id = $2', [me, other])).rowCount > 0; },
+    async areFriends(a, b) { return (await q(`select 1 from friendships where status = 'accepted' and least(requester_id, addressee_id) = least($1::bigint, $2::bigint) and greatest(requester_id, addressee_id) = greatest($1::bigint, $2::bigint)`, [a, b])).rowCount > 0; },
+    async countFriendships(me) { return Number((await q('select count(*) n from friendships where requester_id = $1 or addressee_id = $1', [me])).rows[0].n); },
+    async requestFriend(from, to) {
+      const r = (await q(`select id, status, requester_id from friendships where least(requester_id, addressee_id) = least($1::bigint, $2::bigint) and greatest(requester_id, addressee_id) = greatest($1::bigint, $2::bigint)`, [from, to])).rows[0];
+      if (r) {
+        if (r.status === 'accepted') return 'friends';
+        if (Number(r.requester_id) === from) return 'pending';
+        await q("update friendships set status = 'accepted' where id = $1", [r.id]); return 'accepted';      // os dois pediram: vira amizade
+      }
+      await q("insert into friendships (requester_id, addressee_id, status) values ($1, $2, 'pending')", [from, to]); return 'sent';
+    },
+    async acceptFriend(me, from) { return (await q("update friendships set status = 'accepted' where requester_id = $2 and addressee_id = $1 and status = 'pending'", [me, from])).rowCount > 0; },
+    async deleteFriendship(a, b) { return (await q('delete from friendships where (requester_id = $1 and addressee_id = $2) or (requester_id = $2 and addressee_id = $1)', [a, b])).rowCount > 0; },
+    async blockUser(me, other) {
+      await q('delete from friendships where (requester_id = $1 and addressee_id = $2) or (requester_id = $2 and addressee_id = $1)', [me, other]);
+      await q('insert into blocks (blocker_id, blocked_id) values ($1, $2) on conflict do nothing', [me, other]);
+    },
+    async unblockUser(me, other) { await q('delete from blocks where blocker_id = $1 and blocked_id = $2', [me, other]); },
     // batalhas
     async createBattle(b) {
       const r = await q('insert into battles (season, host_id, gx, gy, faction, level, party) values ($1, $2, $3, $4, $5, $6, $7) returning id', [b.season, b.hostId, b.gx, b.gy, b.faction, b.level, b.party]);
@@ -114,6 +159,32 @@ function memoryStore() {
       for (const s of changed) sectors.set(`${s.c},${s.r}`, { ...s });
       for (const t of evs) events.unshift({ t: season, m: t });
     },
+    // amizades e bloqueios
+    _fr: [], _bl: [],
+    async friendLists(me) {
+      const out = { friends: [], incoming: [], outgoing: [], blocked: [] }, nm = id => ({ id, name: users.get(id).username });
+      for (const f of this._fr) {
+        if (f.a !== me && f.b !== me) continue;
+        const other = f.a === me ? f.b : f.a;
+        if (f.status === 'accepted') out.friends.push(nm(other)); else if (f.a === me) out.outgoing.push(nm(other)); else out.incoming.push(nm(other));
+      }
+      for (const b of this._bl) if (b.by === me) out.blocked.push(nm(b.to));
+      return out;
+    },
+    async isBlocked(a, b) { return this._bl.some(x => (x.by === a && x.to === b) || (x.by === b && x.to === a)); },
+    async blockedByMe(me, other) { return this._bl.some(x => x.by === me && x.to === other); },
+    _find(a, b) { return this._fr.find(f => (f.a === a && f.b === b) || (f.a === b && f.b === a)); },
+    async areFriends(a, b) { const f = this._find(a, b); return !!f && f.status === 'accepted'; },
+    async countFriendships(me) { return this._fr.filter(f => f.a === me || f.b === me).length; },
+    async requestFriend(from, to) {
+      const f = this._find(from, to);
+      if (f) { if (f.status === 'accepted') return 'friends'; if (f.a === from) return 'pending'; f.status = 'accepted'; return 'accepted'; }
+      this._fr.push({ a: from, b: to, status: 'pending' }); return 'sent';
+    },
+    async acceptFriend(me, from) { const f = this._fr.find(x => x.a === from && x.b === me && x.status === 'pending'); if (!f) return false; f.status = 'accepted'; return true; },
+    async deleteFriendship(a, b) { const f = this._find(a, b); if (!f) return false; this._fr.splice(this._fr.indexOf(f), 1); return true; },
+    async blockUser(me, other) { await this.deleteFriendship(me, other); if (!this._bl.some(x => x.by === me && x.to === other)) this._bl.push({ by: me, to: other }); },
+    async unblockUser(me, other) { this._bl = this._bl.filter(x => !(x.by === me && x.to === other)); },
     async createBattle(b) { const id = ++bid; battles.set(id, { ...b, id }); return id; },
     async finishBattle(id, result, delta, members, season, points) {
       const b = battles.get(id); if (b) { b.result = result; b.delta = delta; }

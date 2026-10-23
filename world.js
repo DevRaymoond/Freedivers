@@ -66,11 +66,11 @@ async function createWorld(store, onChange) {
       const before = W.dominant(s);
       let delta, events = [];
       if (win) {
-        delta = W.applyWin(s, b.level, b.party);
-        events.push(W.isHuman(s) && before !== 'H' ? `Setor ${name} libertado dos ${W.FACTION_NAME[before].toLowerCase()}! (+${delta}% humanos)` : `Os jogadores avançaram ${delta}% em ${name}.`);
+        delta = W.applyWin(s, b.mission, b.level);
+        events.push(W.isHuman(s) && before !== 'H' ? `Setor ${name} libertado dos ${W.FACTION_NAME[before].toLowerCase()}! (+${W.pct2(delta)})` : `Os jogadores avançaram ${W.pct2(delta)} em ${name}.`);
       } else {
-        delta = W.applyLoss(s);
-        events.push(`A operação em ${name} falhou. O inimigo recuperou ${-delta}% do setor.`);
+        delta = W.applyLoss(s, b.mission, b.level);
+        events.push(`A operação em ${name} falhou. O inimigo recuperou ${W.pct2(-delta)} do setor.`);
       }
       await store.finishBattle(b.id, win ? 'win' : 'loss', delta, b.members, season, win ? delta : 0);
       turn++;

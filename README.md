@@ -20,13 +20,23 @@ HOST=127.0.0.1 node server.js     # abre em http://127.0.0.1:8765
 O host roda o mundo (inimigos, pelotões, ondas); cada jogador controla o próprio personagem. A sala fecha para novos jogadores
 enquanto a operação está em andamento. Na operação, o grupo compartilha os 3 reforços e **todos** precisam embarcar na nave.
 
+## Modos de jogo
+- **Novo jogo = campanha local:** você sozinho contra o resto do mapa, sem conta; o progresso fica neste aparelho.
+- **Modo online = mundo compartilhado** (precisa de login): o mapa é o mesmo para todos e muda ao vivo. Você ataca um setor sozinho ou entra no **esquadrão** de quem já está
+  jogando naquele setor, se houver vaga (até 4). O host escolhe quem pode entrar: **Aberto**, **Só amigos** ou **Fechado**; dá para entrar com a operação em andamento.
+- **Amigos:** enviar e aceitar/recusar/cancelar pedido, remover, **bloquear/desbloquear**, ver quem está online e em qual setor, **convidar** para o esquadrão (convite vale 60 s) e
+  entrar no esquadrão de um amigo. Bloqueado não pede amizade, não convida nem entra nos seus esquadrões. Tabelas `friendships` e `blocks`.
+- **Progresso do setor:** cada missão vale um progresso base e **cada nível de ameaça soma +1**; **1 ponto = 0,01%** do setor.
+  Base: Operação Gerador 1500 · Limpeza 600 · Coleta 500 · Faróis 500 · Defesa 700 · Extração 800 · Rainha 2000
+  (ex.: Operação Gerador no nível 10 = 1510 pontos = 15,10%). Com 50% ou mais o setor passa a ser dos humanos. Derrota devolve 40% do que a missão valeria ao inimigo.
+
 ## Contas, mundo compartilhado e banco (Neon)
 Com `DATABASE_URL` definida o servidor liga **login obrigatório** (usuário, senha e confirmar senha) e a **campanha única para todos os jogadores**:
-cada quadrado do mapa tem a porcentagem de domínio de humanos, insetos e robôs, mostrada ao vivo para todos; vencer uma operação aumenta a % dos humanos
-(mais com nível de ameaça alto e mais jogadores) e, de tempos em tempos, as facções brigam entre si e contra os humanos. Sem `DATABASE_URL` o jogo roda
+cada quadrado do mapa tem a porcentagem de domínio de humanos, insetos e robôs (em centésimos de %, soma 10000), mostrada ao vivo para todos; vencer uma operação
+aumenta a % dos humanos e, de tempos em tempos, as facções brigam entre si e contra os humanos. Bancos criados antes da escala de 0,01% são migrados sozinhos no primeiro boot. Sem `DATABASE_URL` o jogo roda
 local, sem contas, com a campanha salva no navegador (como no `Jogar.bat`).
 - **Banco:** rode `deploy/schema.sql` uma vez no SQL Editor do Neon (já foi aplicado no projeto *MultiPunk*). Tabelas: `users`, `sessions`, `world_sectors`,
-  `world_meta`, `world_events`, `battles`, `battle_members`, `contributions`.
+  `world_meta`, `world_events`, `battles`, `battle_members`, `contributions`, `friendships`, `blocks`.
 - **Variáveis:** copie `deploy/.env.example` para `.env` na VPS (`chmod 600`) e preencha `DATABASE_URL` (conexão *pooled* do Neon, `sslmode=verify-full`),
   `TRUST_PROXY=1` atrás de nginx/Caddy e `ALLOWED_ORIGINS=https://seu-dominio`. O systemd já lê esse arquivo (`EnvironmentFile`).
 - **Segurança:** senhas com bcrypt (custo 12, 8 a 72 caracteres) · sessão em cookie HttpOnly + SameSite=Strict (+ Secure em HTTPS), token de 256 bits e só o hash no banco ·
@@ -40,7 +50,7 @@ local, sem contas, com a campanha salva no navegador (como no `Jogar.bat`).
   O nível mínimo ali é o maior entre os dois lados.
 - **Atrás de proxy (Coolify/Nixpacks/Traefik, nginx, Caddy):** `TRUST_PROXY=1` e `HOST=0.0.0.0` dentro do container; `PROXY_HOPS=2` se houver Cloudflare na frente do proxy.
 - **Dificuldade por jogadores:** vida, quantidade e dano dos inimigos crescem com o número de jogadores da sessão (invisível no jogo).
-- Testes: `npm test` (salas e contas/limites/mundo, usando banco em memória, sem tocar no Neon).
+- Testes: `npm test` (salas, contas/limites/mundo e amizades/esquadrões, usando banco em memória, sem tocar no Neon).
 
 ## Hospedar na sua VPS
 Requisitos: Node.js 18+ e uma porta aberta (ou nginx na frente).

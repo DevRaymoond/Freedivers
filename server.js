@@ -15,6 +15,7 @@ const { WebSocketServer } = require('ws');
 const { createStore } = require('./store');
 const { createAuth, clientIp, limiter } = require('./auth');
 const { createWorld } = require('./world');
+const { createSocial } = require('./social');
 
 const root = __dirname;
 const port = Number(process.env.PORT) || 8765;
@@ -73,7 +74,7 @@ function sendIndex(req, res) {
 
 // ───────────── contas e mundo (só com banco) ─────────────
 const store = createStore();
-let auth = null, world = null;
+let auth = null, world = null, social = null;
 const authOn = () => !!auth;
 
 const server = http.createServer((req, res) => {
@@ -94,7 +95,9 @@ const server = http.createServer((req, res) => {
 server.headersTimeout = 15000; server.requestTimeout = 30000; server.keepAliveTimeout = 5000; server.maxHeadersCount = 60;
 
 // ───────────── salas ─────────────
-const rooms = new Map();        // código -> { code, host, clients: Map(id -> ws), locked }
+const rooms = new Map();        // código -> { id, code, host, clients: Map(id -> ws), locked, policy, sector… }
+let roomSeq = 0;
+const memberCount = room => 1 + room.clients.size;
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 function newCode() {
   for (let n = 0; n < 50; n++) {
@@ -129,6 +132,19 @@ function leave(ws) {
 }
 const roomUserIds = room => [room.host, ...room.clients.values()].map(w => w.meta.user && w.meta.user.id).filter(Boolean);
 
+// entra numa sala (as regras de vaga/bloqueio/política já foram checadas); devolve texto de erro ou null
+function joinRoom(ws, room, ver) {
+  leave(ws);
+  if (room.version && ver && room.version !== ver) return 'Seu jogo está em outra versão. Atualize a página (F5) e tente de novo.';
+  if (memberCount(room) >= MAX_PLAYERS) return 'Sala cheia (máx. 4 jogadores).';
+  let id = 2; while (room.clients.has(id)) id++;
+  ws.meta.name = ws.meta.user ? ws.meta.user.name : ws.meta.name; ws.meta.id = id; ws.meta.room = room;
+  room.clients.set(id, ws);
+  send(ws, { t: 'joined', code: room.code, id, hostId: 1 });
+  broadcastRoster(room);
+  return null;
+}
+
 // ───────────── WebSocket (autenticado quando há banco) ─────────────
 const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
 const socketsByUser = new Map(), socketsByIp = new Map();
@@ -159,6 +175,7 @@ wss.on('connection', ws => {
     socketsByUser.set(user.id, ws);
   }
   ws.on('pong', () => { ws.alive = true; });
+  if (user && social) social.presence(user, true);
   if (user && world) send(ws, { t: 'hello', user, world: world.snapshot() }); else send(ws, { t: 'hello', user: null });
 
   ws.on('message', raw => {
@@ -175,7 +192,7 @@ wss.on('connection', ws => {
       const code = newCode();
       if (!code) return send(ws, { t: 'err', msg: 'Servidor cheio. Tente de novo.' });
       meta.name = user ? user.name : cleanName(m.name); meta.id = 1;
-      const room = { code, host: ws, clients: new Map(), locked: false, version: String(m.ver || '') };
+      const room = { id: ++roomSeq, code, host: ws, clients: new Map(), locked: false, policy: 'closed', sector: null, level: 0, mission: '', startedAt: 0, version: String(m.ver || '') };
       rooms.set(code, room); meta.room = room;
       send(ws, { t: 'hosted', code, id: 1 });
       broadcastRoster(room);
@@ -184,16 +201,21 @@ wss.on('connection', ws => {
       if (limiter.hit(`join:${ws.ip}`, 20, 60000)) return send(ws, { t: 'err', msg: 'Muitas tentativas. Aguarde um minuto.' });   // contra adivinhar códigos
       const room = rooms.get(String(m.code || '').toUpperCase().trim());
       if (!room) return send(ws, { t: 'err', msg: 'Código inválido ou sala encerrada.' });
-      if (room.version && m.ver && room.version !== String(m.ver)) return send(ws, { t: 'err', msg: 'Seu jogo está em outra versão. Atualize a página (F5) e tente de novo.' });
-      if (room.locked) return send(ws, { t: 'err', msg: 'Essa sala já iniciou a operação.' });
-      if (room.clients.size + 1 >= MAX_PLAYERS) return send(ws, { t: 'err', msg: 'Sala cheia (máx. 4 jogadores).' });
-      let id = 2; while (room.clients.has(id)) id++;
-      meta.name = user ? user.name : cleanName(m.name); meta.id = id; meta.room = room;
-      room.clients.set(id, ws);
-      send(ws, { t: 'joined', code: room.code, id, hostId: 1 });
-      broadcastRoster(room);
+      meta.name = user ? user.name : cleanName(m.name);
+      if (!(social && user)) {                                    // sem contas: checagem síncrona (ordem de entrada previsível)
+        const bad = room.locked ? 'Essa sala está fechada.' : memberCount(room) >= MAX_PLAYERS ? 'Sala cheia (máx. 4 jogadores).' : null;
+        if (bad) return send(ws, { t: 'err', msg: bad });
+        const r = joinRoom(ws, room, String(m.ver || '')); if (r) send(ws, { t: 'err', msg: r }); return;
+      }
+      (async () => {
+        const bad = await social.canJoin(user, room);
+        if (bad) return send(ws, { t: 'err', msg: bad });
+        const r = joinRoom(ws, room, String(m.ver || '')); if (r) send(ws, { t: 'err', msg: r });
+      })().catch(e => { console.error('[join]', e.message); send(ws, { t: 'err', msg: 'Erro no servidor.' }); });
     } else if (m.t === 'leave') {
       leave(ws);
+    } else if (social && /^(f|sq):/.test(m.t)) {
+      social.handle(ws, m);
     } else if (m.t === 'lock' && meta.room && meta.room.host === ws) {
       meta.room.locked = !!m.locked; broadcastRoster(meta.room);
     } else if (m.t === 'to' && meta.room) {
@@ -207,14 +229,14 @@ wss.on('connection', ws => {
       // reserva a batalha no servidor: só quem é host (ou joga sozinho) abre; o servidor decide se o setor pode ser atacado
       if (meta.room && meta.room.host !== ws) return send(ws, { t: 'campErr', msg: 'Só o host inicia operações.' });
       if (now - meta.lastCamp < 3000) return send(ws, { t: 'campErr', msg: 'Calma: aguarde alguns segundos.' });
-      meta.lastCamp = now; meta.battle = null;
+      meta.lastCamp = now; meta.battle = null; if (meta.room) meta.room.sector = null;
       const members = meta.room ? roomUserIds(meta.room) : [user.id];
       world.startBattle({ userId: user.id }, { key: String(m.key || '').slice(0, 8), level: m.level, party: members.length, members })
-        .then(b => { if (b.error) return send(ws, { t: 'campErr', msg: b.error }); meta.battle = b; send(ws, { t: 'campOk', id: b.id, faction: b.faction, level: b.level, party: b.party, mission: b.mission, mix: b.mix }); })
+        .then(b => { if (b.error) return send(ws, { t: 'campErr', msg: b.error }); meta.battle = b; if (meta.room) Object.assign(meta.room, { sector: b.key, level: b.level, mission: b.mission, startedAt: Date.now() }); send(ws, { t: 'campOk', id: b.id, faction: b.faction, level: b.level, party: b.party, mission: b.mission, mix: b.mix }); })
         .catch(e => { console.error('[camp]', e.message); send(ws, { t: 'campErr', msg: 'Erro no servidor. Tente de novo.' }); });
     } else if (m.t === 'campEnd' && world && user && meta.battle) {
       const b = meta.battle; meta.battle = null;
-      if (meta.room) b.members = roomUserIds(meta.room);
+      if (meta.room) { b.members = roomUserIds(meta.room); b.party = Math.max(b.party, b.members.length); meta.room.sector = null; }
       world.endBattle(b, !!m.win && !m.abort).then(r => send(ws, { t: 'campDone', ...r })).catch(e => console.error('[camp]', e.message));
     } else if (m.t === 'ping') send(ws, { t: 'pong', n: m.n });
   });
@@ -222,7 +244,7 @@ wss.on('connection', ws => {
     leave(ws);
     if (ws.dropped) return; ws.dropped = true;
     socketsByIp.set(ws.ip, Math.max(0, (socketsByIp.get(ws.ip) || 1) - 1));
-    if (user && socketsByUser.get(user.id) === ws) socketsByUser.delete(user.id);
+    if (user && socketsByUser.get(user.id) === ws) { socketsByUser.delete(user.id); if (social) social.presence(user, false); }
   };
   ws.on('close', gone); ws.on('error', gone);
 });
@@ -240,6 +262,7 @@ function broadcastWorld(d) {
     await store.init();
     auth = createAuth(store, { origins });
     world = await createWorld(store, broadcastWorld);
+    social = createSocial({ store, socketOf: id => { const w = socketsByUser.get(id); return w && w.readyState === 1 ? w : null; }, rooms, send, joinRoom, memberCount, MAX_PLAYERS });
     setInterval(() => store.purgeSessions().catch(() => {}), 3600000).unref();
     console.log(`Contas e mundo compartilhado ativos (${store.kind}).`);
   } else console.log('Sem DATABASE_URL: jogo local, sem contas (campanha salva no navegador).');

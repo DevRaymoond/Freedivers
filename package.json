@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node server.js",
     "local": "HOST=127.0.0.1 node server.js",
-    "test": "node tools/test_relay.js && node tools/test_auth.js"
+    "test": "node tools/test_relay.js && node tools/test_auth.js && node tools/test_social.js"
   },
   "keywords": [],
   "type": "commonjs",

@@ -20,6 +20,7 @@ export const net = {
   onCamp: null,        // (msg) => void               campOk / campErr / campDone
   onConn: null,        // (conectado) => void
   onKicked: null,      // () => void                  login aberto em outro lugar
+  onSocial: null,      // (msg) => void               amizades, convites e esquadrões (f:* e sq:*)
 };
 
 let ws = null;
@@ -64,6 +65,7 @@ function open() {
         case 'hello': net.user = m.user || null; if (m.world) net.onWorld && net.onWorld(m.world, true); break;
         case 'world': net.onWorld && net.onWorld(m.d, !!m.d.reset); break;
         case 'campOk': case 'campErr': case 'campDone': net.onCamp && net.onCamp(m); break;
+        case 'f:lists': case 'f:notice': case 'f:ok': case 'f:err': case 'f:pres': case 'sq:list': case 'sq:invite': case 'sq:policy': net.onSocial && net.onSocial(m); break;
         case 'kicked': net.kicked = true; net.onKicked && net.onKicked(); break;
         case 'pong': net.rtt = Math.round(performance.now() - (net.t0 || performance.now())); break;
       }
@@ -81,6 +83,7 @@ net.join = async (code, name) => { await open(); return ask({ t: 'join', code, n
 net.leave = () => { send({ t: 'leave' }); reset(); };           // sai da sala mas mantém a conexão (login e mundo) aberta
 net.connect = () => { net.persist = true; net.kicked = false; return open(); };
 net.disconnect = () => { net.persist = false; clearTimeout(retryT); const s = ws; ws = null; reset(); net.user = null; try { s && s.close(); } catch { /* ok */ } };
+net.send = o => send(o);
 net.campStart = (key, level) => send({ t: 'campStart', key, level });
 net.campEnd = (win, abort) => send({ t: 'campEnd', win: !!win, abort: !!abort });
 net.lock = locked => { send({ t: 'lock', locked }); };

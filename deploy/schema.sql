@@ -32,17 +32,18 @@ create table if not exists world_meta (
   value jsonb not null
 );
 
--- cada quadrado do continente: porcentagem de domínio de cada força (soma sempre 100)
+-- cada quadrado do continente: domínio de cada força em centésimos de % (10000 = 100%; 1 ponto de progresso = 0,01%). A soma é sempre 10000
 create table if not exists world_sectors (
   gx         smallint    not null,
   gy         smallint    not null,
   biome      text        not null,
-  human      smallint    not null default 0 check (human  between 0 and 100),
-  insect     smallint    not null default 0 check (insect between 0 and 100),
-  robot      smallint    not null default 0 check (robot  between 0 and 100),
+  human      smallint    not null default 0,
+  insect     smallint    not null default 0,
+  robot      smallint    not null default 0,
   updated_at timestamptz not null default now(),
   primary key (gx, gy),
-  check (human + insect + robot = 100)
+  constraint ws_range check (human between 0 and 10000 and insect between 0 and 10000 and robot between 0 and 10000),
+  constraint ws_sum check (human + insect + robot = 10000)
 );
 
 create table if not exists world_events (                  -- notícias da guerra
@@ -83,6 +84,28 @@ create table if not exists contributions (                 -- ranking por tempor
   battles_won int    not null default 0,
   primary key (season, user_id)
 );
+
+-- ───────────── amizades e bloqueios ─────────────
+create table if not exists friendships (
+  id           bigserial primary key,
+  requester_id bigint      not null references users(id) on delete cascade,
+  addressee_id bigint      not null references users(id) on delete cascade,
+  status       text        not null check (status in ('pending', 'accepted')),
+  created_at   timestamptz not null default now(),
+  check (requester_id <> addressee_id)
+);
+create unique index if not exists friendships_pair_uq on friendships (least(requester_id, addressee_id), greatest(requester_id, addressee_id));
+create index if not exists friendships_addressee_idx on friendships (addressee_id);
+create index if not exists friendships_requester_idx on friendships (requester_id);
+
+create table if not exists blocks (
+  blocker_id bigint      not null references users(id) on delete cascade,
+  blocked_id bigint      not null references users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (blocker_id, blocked_id),
+  check (blocker_id <> blocked_id)
+);
+create index if not exists blocks_blocked_idx on blocks (blocked_id);
 
 -- limpeza periódica de sessões vencidas (o servidor também faz isso sozinho)
 -- delete from sessions where expires_at < now();

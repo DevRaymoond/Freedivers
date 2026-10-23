@@ -114,7 +114,7 @@ function createAuth(store, { origins = [] } = {}) {
         if (!validUsername(b.username)) return send(res, 400, { error: 'Usuário: 3 a 20 letras, números ou _.' }), true;
         if (b.password !== b.confirm) return send(res, 400, { error: 'A confirmação da senha não confere.' }), true;
         const bad = passwordProblem(b.password, b.username); if (bad) return send(res, 400, { error: bad }), true;
-        const wait = limiter.hit(`reg:${ip}`, 5, 3600000);               // contas novas por IP: 5 por hora
+        const wait = limiter.hit(`reg:${ip}`, Number(process.env.REG_PER_HOUR) || 5, 3600000);               // contas novas por IP: 5 por hora
         if (wait) return send(res, 429, { error: `Muitos cadastros deste endereço. Tente em ${Math.ceil(wait / 60)} min.` }, { 'Retry-After': wait }), true;
         const hash = await bcrypt.hash(b.password, COST);
         const user = await store.createUser(b.username, hash);

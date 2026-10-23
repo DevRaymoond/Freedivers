@@ -69,7 +69,7 @@ const last = (ws, t) => [...ws.inbox].reverse().find(m => m.t === t);
   ws = await openWs(cookieLogin); await wait(200);
   check('WebSocket com sessão recebe hello com o mundo', !!ws && !!last(ws, 'hello') && last(ws, 'hello').user.name === 'ana_01' && Object.keys(last(ws, 'hello').world.sectors).length > 300);
   const w0 = last(ws, 'hello').world;
-  const humanKeys = Object.keys(w0.sectors).filter(k => w0.sectors[k][0] >= 50);
+  const humanKeys = Object.keys(w0.sectors).filter(k => w0.sectors[k][0] >= 5000);
   check('começa com poucos quadrados humanos', humanKeys.length >= 5 && humanKeys.length <= 12, humanKeys.length);
   const target = Object.keys(w0.sectors).find(k => w0.sectors[k][0] === 0 && [-1, 0, 1].some(dc => [-1, 0, 1].some(dr => (dc || dr) && humanKeys.includes(`${+k.split(',')[0] + dc},${+k.split(',')[1] + dr}`))));
   ws.send(JSON.stringify({ t: 'campStart', key: '0,0', level: 3 })); await wait(150);
