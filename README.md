@@ -39,8 +39,8 @@ enquanto a operação está em andamento. Na operação, o grupo compartilha os 
 - **Guerra dinâmica:** a cada minuto cada facção ataca vários setores vizinhos, tanto os humanos quanto a outra facção (criando **fronteiras** onde insetos e robôs aparecem juntos). No mapa, fronteiras mostram a faixa roxa × vermelha e os setores que mudaram há pouco pulsam;
   no painel do setor há **duas barras**: a luta entre insetos e robôs e o avanço humano (azul, com os marcos de 50% e 100%), com setas de quem está ganhando terreno. **Partida livre** mostra os setores que mais precisam de atenção (os que estão para ser retomados, os perto de dominar e as fronteiras) e a partida vale para o mundo. Sem contas no servidor (sem `DATABASE_URL`), ela vira um treino sem efeito no mundo.
 - **Progresso do setor:** cada missão vale um progresso base e **cada nível de ameaça soma +1**; **1 ponto = 0,01%** do setor.
-  Base: Operação Gerador 300 · Limpeza 120 · Coleta 100 · Faróis 100 · Defesa 140 · Extração 160 · Rainha 400
-  (ex.: Operação Gerador no nível 10 = 310 pontos = 3,10%). Com 50% ou mais o setor passa a ser dos humanos. Derrota devolve 25% (1/4) do que a missão valeria ao inimigo.
+  Base: 0,0015% por segundo do tempo-meta da missão (partida de 5 min = 0,45%): Operação Gerador 1,44% · Limpeza e Rainha 0,54% · Coleta, Faróis e Extração 0,45% · Defesa 0,36%
+  (ex.: Operação Gerador no nível 10 = 1,54%). Com 50% ou mais o setor passa a ser dos humanos. Derrota devolve 25% (1/4) do que a missão valeria ao inimigo.
 
 ## Contas, mundo compartilhado e banco (Neon)
 Com `DATABASE_URL` definida o servidor liga **login obrigatório** (usuário, senha e confirmar senha) e a **campanha única para todos os jogadores**:

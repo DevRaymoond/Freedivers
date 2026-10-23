@@ -41,14 +41,17 @@ const check = (name, ok, extra) => { console.log(ok ? 'OK   ' : 'FALHA', name, o
   check('a soma continua 100% em todos os setores', [...sec2.values()].every(v => v.h + v.i + v.r === W.SCALE && v.h >= 0 && v.i >= 0 && v.r >= 0));
 
   // dinamismo: fronteiras entre insetos e robôs surgem sozinhas
-  const sec3 = W.seedSectors(idx), domCount = () => [...sec3.values()].filter(v => !W.isHuman(v)).length;
-  for (let t = 0; t < 1440; t++) W.warTick(idx, sec3, t + 7);
-  const day1 = domCount();
-  check('em 1 dia a expansão ainda é pequena', day1 <= 12, 'setores inimigos: ' + day1);
-  for (let t = 1440; t < 1440 * 40; t++) W.warTick(idx, sec3, t + 7);
-  const day40 = domCount();
-  check('em ~40 dias os inimigos tomaram alguns setores, mas não o planeta', day40 > 8 && day40 < sec3.size * 0.4, 'setores inimigos: ' + day40);
-
+  const sec3 = W.seedSectors(idx), enemyCount = () => [...sec3.values()].filter(v => !W.isHuman(v)).length, ft = () => [...sec3.values()].filter(v => v.h < W.SCALE).length;
+  W.warTick(idx, sec3, 1);
+  const edge = [...sec3.entries()].find(([k, v]) => v.h === W.SCALE - 9);
+  check('um minuto de guerra avança 9 pontos (0,09%) por setor atacado, sem sorteio', !!edge && [...sec3.values()].every(v => v.h === W.SCALE || v.h === W.SCALE - 9 || v.i === W.SCALE || v.r === W.SCALE));
+  for (let t = 1; t < 1440; t++) W.warTick(idx, sec3, t + 7);
+  const day1 = enemyCount();
+  check('em 1 dia caem só os dois primeiros anéis de setores', day1 >= 8 && day1 <= 80, 'setores inimigos: ' + day1);
+  for (let t = 1440; t < 1440 * 6; t++) W.warTick(idx, sec3, t + 7);
+  const day6 = enemyCount();
+  check('em ~6 dias, sem os jogadores, o planeta quase todo caiu (o último reduto resiste)', day6 >= sec3.size - 8, 'setores inimigos: ' + day6 + ' de ' + sec3.size);
+  check('o ganho de uma partida é proporcional ao tempo-meta (5 min = 0,45%)', W.MISSION_POINTS.samples === 45 && W.MISSION_POINTS.operation === 144);
   // setor fixo resiste: avanço inimigo é metade do normal em média
   const fixo = { h: W.SCALE, i: 0, r: 0 }, soft = { h: 9000, i: 1000, r: 0 };
   check('o inimigo só pode empurrar quem tem vizinho dominado por facção (underPressure)', typeof W.underPressure === 'function');

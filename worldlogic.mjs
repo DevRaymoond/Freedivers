@@ -72,9 +72,13 @@ export const MIX_MIN = 1000;
 export const mixOf = s => (s.i >= MIX_MIN && s.r >= MIX_MIN ? { i: s.i, r: s.r } : null);
 export const minLevelSector = (sec, init, s, max = 20) => { const m = mixOf(s); return m ? Math.max(minLevel(sec, init, 'I', max), minLevel(sec, init, 'R', max)) : minLevel(sec, init, enemyOf(s), max); };
 
-// Cada missão vale um progresso base; cada nível de ameaça soma +1 ponto. 1 ponto = 0,01% do setor (nível 20 da Operação Gerador = 320 pontos = 3,20%). Valores baixos de propósito: um setor leva dezenas de vitórias e os inimigos avançam sozinhos com o tempo.
-export const MISSION_POINTS = { operation: 300, purge: 120, samples: 100, beacon: 100, defend: 140, extract: 160, queen: 400 };
-export const missionGain = (id, level) => (MISSION_POINTS[id] || 100) + Math.max(1, Math.min(20, Math.round(level) || 1));
+// Ritmo do jogo: o inimigo avança 0,0015% por segundo em cada setor atacado (9 pontos por minuto; 100% em 18 h 31 min).
+// A vitória de uma missão vale o mesmo ritmo aplicado ao tempo-meta dela (partida de 5 min = 0,45%); o tempo só serve para calcular, não corre na partida.
+// 1 ponto = 0,01% do setor. Cada nível de ameaça soma +1 ponto.
+export const ENEMY_PTS_PER_MIN = 9;
+export const MISSION_PAR = { operation: 16, purge: 6, samples: 5, beacon: 5, defend: 4, extract: 5, queen: 6 };       // minutos (tempo-meta de cada missão)
+export const MISSION_POINTS = Object.fromEntries(Object.entries(MISSION_PAR).map(([id, m]) => [id, m * ENEMY_PTS_PER_MIN]));
+export const missionGain = (id, level) => (MISSION_POINTS[id] || 5 * ENEMY_PTS_PER_MIN) + Math.max(1, Math.min(20, Math.round(level) || 1));
 const move = (s, from, to, n) => { n = Math.min(n, s[from]); s[from] -= n; s[to] += n; return n; };
 // vitória: os humanos tomam o progresso do defensor (e, se faltar, do outro lado). Derrota: o defensor recupera 25% do que a missão valeria.
 export function applyWin(s, missionId, level) {
@@ -85,33 +89,26 @@ export function applyWin(s, missionId, level) {
 export const LOSS_RATIO = 0.25;                                          // derrota: os humanos perdem 1/4 do que a vitória renderia e o inimigo ganha o mesmo tanto
 export function applyLoss(s, missionId, level) { const d = enemyOf(s) === 'I' ? 'i' : 'r'; return -move(s, 'h', d, Math.round(missionGain(missionId, level) * LOSS_RATIO)); }
 
-// Passo da guerra (a cada minuto): a expansão é lenta, na escala de dias. A cada minuto cada facção tem uma pequena chance de empurrar um quadrado vizinho
-// (contra os humanos ou contra a outra facção); quanto mais quadrados domina, mais chance. Só ataca a partir de um setor que domina.
-export const ATTACK_BASE = 0.005;
-export const ENEMY_EDGE = 1.5;                                                 // vantagem do inimigo no progresso (os jogadores ganham `missionGain`; eles empurram 1,5x)
-export function warTick(idx, sec, seed, minHumanSectors = 3) {
-  const R = rng(seed), events = [], changed = new Set();
+// Passo da guerra (a cada minuto): avanço contínuo e fixo. Cada facção empurra, ENEMY_PTS_PER_MIN pontos por minuto, todo setor vizinho de um setor
+// que ela já tem com 50% ou mais (dominado). Setores atrás de território humano ficam fora de alcance. Os jogadores seguram o avanço vencendo missões.
+export function warTick(idx, sec, seed, minHumanSectors = 3, pts = ENEMY_PTS_PER_MIN) {
+  const events = [], changed = new Set();
   for (const f of ['I', 'R']) {
-    const fl = f.toLowerCase(), fronts = []; let dom = 0;
-    for (const o of idx.cells) { const k = key(o.c, o.r); const sk = sec.get(k), dm = dominant(sk) === f;
-      if (dm) dom++;
-      if (dm || (!isHuman(sk) && sk[fl] >= MIX_MIN)) for (const n of idx.nbr.get(k)) if (dominant(sec.get(n)) !== f) fronts.push(n); }   // enquanto o setor não é dominado pelos humanos, a facção que tem presença nele pode avançar para os vizinhos
-    if (!fronts.length || R() > Math.min(0.25, ATTACK_BASE * (1 + dom / 12))) continue;
-    const tk = fronts[Math.floor(R() * fronts.length)], t = sec.get(tk), tc = idx.byKey.get(tk);
-    const def = ['h', 'i', 'r'].filter(x => x !== fl).sort((x, y) => t[y] - t[x])[0];
-    if (!t[def]) continue;
-    let push = Math.round((80 + Math.floor(R() * 180)) * ENEMY_EDGE);            // 1,20% a 3,90% por ataque: avançar é mais fácil para eles do que para os jogadores
-    if (def === 'h') {
-      if (humanCount(sec) <= minHumanSectors && isHuman(t)) continue;           // o último reduto não cai
-      if (t.h >= SCALE) push = Math.round(push * 0.5);                          // setor fixo resiste
+    const fl = f.toLowerCase(), targets = new Set();
+    for (const o of idx.cells) { const k = key(o.c, o.r); if (sec.get(k)[fl] >= HUMAN_MIN) for (const n of idx.nbr.get(k)) if (sec.get(n)[fl] < HUMAN_MIN) targets.add(n); }
+    for (const tk of targets) {
+      const t = sec.get(tk), tc = idx.byKey.get(tk);
+      const def = ['h', 'i', 'r'].filter(x => x !== fl).sort((x, y) => t[y] - t[x])[0];
+      if (!t[def]) continue;
+      if (def === 'h' && humanCount(sec) <= minHumanSectors && isHuman(t)) continue;      // o último reduto não cai
+      const before = dominant(t), stBefore = stageOf(t), n = move(t, def, fl, pts);
+      if (!n) continue;
+      changed.add(tk);
+      const name = cellName(tc.c, tc.r);
+      if (def === 'h' && stBefore === 'dominado' && stageOf(t) === 'disputa') events.push(`${FACTION_NAME[f]} retomaram o setor ${name}!`);
+      else if (def === 'h' && stBefore === 'fixo') events.push(`${FACTION_NAME[f]} atacam o setor fixo ${name}.`);
+      else if (dominant(t) !== before) events.push(`${FACTION_NAME[f]} tomaram o setor ${name} dos ${FACTION_NAME[before].toLowerCase()}.`);
     }
-    const before = dominant(t), stBefore = stageOf(t), n = move(t, def, fl, push);
-    if (!n) continue;
-    changed.add(tk);
-    const name = cellName(tc.c, tc.r);
-    if (def === 'h' && stBefore === 'dominado' && stageOf(t) === 'disputa') events.push(`${FACTION_NAME[f]} retomaram o setor ${name}!`);
-    else if (def === 'h' && stBefore === 'fixo') events.push(`${FACTION_NAME[f]} atacam o setor fixo ${name}.`);
-    else if (dominant(t) !== before) events.push(`${FACTION_NAME[f]} tomaram o setor ${name} dos ${FACTION_NAME[before].toLowerCase()}.`);
   }
   return { events, changed: [...changed] };
 }

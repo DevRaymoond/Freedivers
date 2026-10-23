@@ -85,7 +85,7 @@ async function createWorld(store, onChange) {
   // avanço da guerra com o tempo (inimigos brigam entre si e contra os humanos)
   const timer = setInterval(() => queue(async () => {
     turn++;
-    const t = W.warTick(idx, sec, W.hash2(season, turn));
+    const t = W.warTick(idx, sec, W.hash2(season, turn), 3, W.ENEMY_PTS_PER_MIN * TICK_MS / 60000);
     if (t.changed.length) await commit(t.changed, t.events); else await store.saveWorld(metaNow(), [], [], season, false);
   }).catch(e => console.error('[world] tick:', e.message)), TICK_MS);
   timer.unref();

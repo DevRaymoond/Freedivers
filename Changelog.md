@@ -49,3 +49,8 @@
 
 ## 2026-10-23 (progresso por vitória menor)
 - Progresso base por missão dividido por 5 (Operação Gerador 15% → 3%, Rainha 20% → 4%, Coleta/Faróis 1%); a derrota continua custando 1/4 do valor. Constante `MISSION_POINTS` em `worldlogic.mjs`.
+
+## 2026-10-23 (ritmo proporcional ao tempo)
+- Inimigo: avanço **contínuo e fixo** de 0,0015% por segundo (9 pontos por minuto) em cada setor vizinho de um setor que a facção já tem com 50% ou mais; 100% em 18 h 31 min por setor. Sem sorteio e sem bônus por setor fixo. Sem jogadores, o planeta cai em ~4 dias (o último reduto de 3 setores resiste).
+- Jogadores: o ganho da vitória é o mesmo ritmo aplicado ao tempo-meta da missão (`MISSION_PAR`): 5 min = 0,45%, Operação Gerador 1,44%. O tempo só entra no cálculo, a partida não ganha relógio. Derrota continua custando 1/4.
+- Removidas as constantes `ATTACK_BASE` e `ENEMY_EDGE`; novos `ENEMY_PTS_PER_MIN`, `MISSION_PAR`.
