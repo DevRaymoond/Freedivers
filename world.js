@@ -22,12 +22,12 @@ async function createWorld(store, onChange) {
   async function seed(newSeason) {
     sec = W.seedSectors(idx); init = W.initTotals(sec); turn = 0; if (newSeason) season = newSeason;
     log = [];
-    await store.saveWorld(metaNow(), [...sec.keys()].map(rowOf), ['Nova temporada: cabeça de ponte estabelecida. Insetos e robôs disputam o continente.'], season, true);
-    log.unshift({ t: season, m: 'Nova temporada: cabeça de ponte estabelecida. Insetos e robôs disputam o continente.' });
+    await store.saveWorld(metaNow(), [...sec.keys()].map(rowOf), ['Insetos e robôs pousaram em lados opostos do planeta. Mantenha o controle dos setores.'], season, true);
+    log.unshift({ t: season, m: 'Insetos e robôs pousaram em lados opostos do planeta. Mantenha o controle dos setores.' });
   }
   async function load() {
     const d = await store.loadWorld();
-    if (d.sectors.length !== cells.length || !d.meta.init) { await seed(d.meta.season ? d.meta.season : 1); return; }
+    if (d.sectors.length !== cells.length || W.isOldLayout(d.meta.init)) { await seed(d.meta.season ? d.meta.season : 1); return; }
     season = d.meta.season || 1; turn = d.meta.turn || 0; init = d.meta.init;
     sec = new Map(d.sectors.map(s => [W.key(s.c, s.r), { h: s.h, i: s.i, r: s.rb }]));
     log = d.events;

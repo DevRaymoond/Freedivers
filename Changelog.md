@@ -29,3 +29,8 @@
 - CSS leve no toque: sem desfoque de fundo, sem linhas de varredura do menu e sem sombras de texto; flash de dano por opacidade.
 - Experiência Android: PWA (`manifest.webmanifest`, ícones em `assets/icons/`, `sw.js` com cache dos modelos e bibliotecas, botão **Instalar como app** em Configurações), tela cheia + orientação horizontal no primeiro toque, tela sempre ligada durante a missão, vibração ao levar dano (configurável) e botão Voltar do Android pausa o jogo.
 - `tools/make_icons.py` gera os ícones; servidor libera `/sw.js` e `/manifest.webmanifest`.
+
+## 2026-10-23 (guerra lenta: começa quase tudo humano)
+- Início da campanha: o planeta é dos humanos; insetos (oeste) e robôs (leste) começam com só 2x2 setores cada (`SEEDS` em `worldlogic.mjs`).
+- A expansão é lenta, na escala de dias: a cada minuto cada facção tem uma pequena chance (`ATTACK_BASE`, cresce com os setores que domina) de empurrar um vizinho. Sem intervenção dos jogadores, os primeiros setores caem em ~2 semanas e o planeta em ~3 meses.
+- Mundos salvos com o desenho antigo (servidor e campanha local) são reiniciados sozinhos (`isOldLayout`). A campanha local recupera até 3 dias de guerra ao reabrir o jogo.

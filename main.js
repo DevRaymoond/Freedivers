@@ -1715,11 +1715,11 @@ async function loadWorld() {
 }
 function ensureLocalCampaign() {
   const C = save.campaign;
-  if (C && C.sec && Object.keys(C.sec).length === GEO.cells.length) {
+  if (C && C.sec && Object.keys(C.sec).length === GEO.cells.length && !WL.isOldLayout(C.init)) {
     Object.assign(WLOC, { sec: WL.unpackSectors(C.sec), init: C.init, turn: C.turn, log: C.log || [], season: C.season || 1, lastTick: C.lastTick || Date.now() }); localWarCatchUp(); return;
   }
   const sec = WL.seedSectors(GEO.idx);
-  Object.assign(WLOC, { sec, init: WL.initTotals(sec), turn: 0, season: 1, log: [{ t: 0, m: 'Cabeça de ponte estabelecida. Insetos e robôs disputam o continente.' }] });
+  Object.assign(WLOC, { sec, init: WL.initTotals(sec), turn: 0, season: 1, log: [{ t: 0, m: 'Insetos e robôs pousaram em lados opostos do planeta. Mantenha o controle dos setores.' }] });
   saveLocalCampaign();
 }
 function saveLocalCampaign() { save.campaign = { sec: WL.packSectors(WLOC.sec), init: WLOC.init, turn: WLOC.turn, log: WLOC.log, season: WLOC.season, lastTick: WLOC.lastTick || Date.now() }; persist(); }
@@ -1753,7 +1753,7 @@ function localWarStep() {
 }
 function localWarCatchUp() {
   if (!GEO.idx || !WLOC.sec.size) return;
-  const now = Date.now(), last = WLOC.lastTick || now, n = Math.min(12, Math.floor((now - last) / 60000));
+  const now = Date.now(), last = WLOC.lastTick || now, n = Math.min(4320, Math.floor((now - last) / 60000));
   WLOC.lastTick = n ? now - ((now - last) % 60000) : last;
   for (let i = 0; i < n; i++) localWarStep();
   if (n) { saveLocalCampaign(); if ($('pane-camp') && $('pane-camp').classList.contains('on')) renderCampaign(WLOC); }

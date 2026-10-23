@@ -24,17 +24,18 @@ export function makeIndex(cells) {
   return { cells, byKey, nbr };
 }
 
-// começo da campanha: cabeça de ponte dos humanos no sul; insetos a oeste e robôs a leste
+// começo da campanha: o planeta é dos humanos; cada facção tem só um bloco de 2x2 quadrados, em lados opostos (insetos a oeste, robôs a leste)
+export const SEEDS = { I: { c: 4, r: 10 }, R: { c: 19, r: 9 } };
 export function seedSectors(idx) {
-  const sec = new Map(), seedP = { c: 12, r: 17 }, seedI = { c: 5, r: 9 }, seedR = { c: 19, r: 8 };
-  const d = (o, s) => Math.hypot(o.c - s.c, o.r - s.r);
-  for (const o of idx.cells) {
-    const jitter = (hash2(o.c, o.r) % 100) / 100 * 1.6 - 0.8;
-    const f = d(o, seedP) <= 1.9 ? 'H' : (d(o, seedI) + jitter <= d(o, seedR) ? 'I' : 'R');
-    sec.set(key(o.c, o.r), { h: f === 'H' ? SCALE : 0, i: f === 'I' ? SCALE : 0, r: f === 'R' ? SCALE : 0 });
+  const sec = new Map(idx.cells.map(o => [key(o.c, o.r), { h: SCALE, i: 0, r: 0 }]));
+  for (const f of ['I', 'R']) {
+    const sd = SEEDS[f], d = o => Math.hypot(o.c - (sd.c + 0.5), o.r - (sd.r + 0.5));
+    for (const o of [...idx.cells].sort((x, y) => d(x) - d(y) || x.c - y.c || x.r - y.r).slice(0, 4)) sec.set(key(o.c, o.r), { h: 0, i: f === 'I' ? SCALE : 0, r: f === 'R' ? SCALE : 0 });
   }
   return sec;
 }
+// mundo salvo com o desenho antigo (facções dominando metade do mapa) é reiniciado
+export const isOldLayout = init => !init || (init.i || 0) + (init.r || 0) > 10 * SCALE;
 export function initTotals(sec) { const t = { i: 0, r: 0 }; for (const s of sec.values()) { t.i += s.i; t.r += s.r; } return t; }
 
 export const HUMAN_MIN = 5000;                                  // 50% ou mais = quadrado dos humanos
@@ -83,34 +84,30 @@ export function applyWin(s, missionId, level) {
 }
 export function applyLoss(s, missionId, level) { const d = enemyOf(s) === 'I' ? 'i' : 'r'; return -move(s, 'h', d, Math.round(missionGain(missionId, level) * 0.4)); }
 
-// Passo da guerra (a cada minuto no servidor): cada facção empurra vários setores vizinhos — contra a outra facção (criando fronteiras onde as duas
-// aparecem juntas) e contra os humanos. Só ataca a partir de um setor que ela domina: setores atrás de território humano não estão ao alcance.
+// Passo da guerra (a cada minuto): a expansão é lenta, na escala de dias. A cada minuto cada facção tem uma pequena chance de empurrar um quadrado vizinho
+// (contra os humanos ou contra a outra facção); quanto mais quadrados domina, mais chance. Só ataca a partir de um setor que domina.
+export const ATTACK_BASE = 0.008;
 export function warTick(idx, sec, seed, minHumanSectors = 3) {
   const R = rng(seed), events = [], changed = new Set();
-  const total = idx.cells.length;
   for (const f of ['I', 'R']) {
-    const fl = f.toLowerCase(), fronts = [];
-    for (const o of idx.cells) { const k = key(o.c, o.r); if (dominant(sec.get(k)) === f) for (const n of idx.nbr.get(k)) if (dominant(sec.get(n)) !== f) fronts.push(n); }
-    if (!fronts.length) continue;
-    const attacks = Math.min(4, 1 + Math.floor(fronts.length / 20));
-    for (let a = 0; a < attacks; a++) {
-      const tk = fronts[Math.floor(R() * fronts.length)], t = sec.get(tk), tc = idx.byKey.get(tk);
-      const def = ['h', 'i', 'r'].filter(x => x !== fl).sort((x, y) => t[y] - t[x])[0];
-      if (!t[def]) continue;
-      let push = 80 + Math.floor(R() * 180);                                       // 0,80% a 2,60% por ataque
-      if (def === 'h') {
-        if (humanCount(sec) <= minHumanSectors && isHuman(t)) continue;           // o último reduto não cai
-        if (R() > 0.35 + 0.35 * (humanCount(sec) / total)) continue;
-        if (t.h >= SCALE) push = Math.round(push * 0.5);                          // setor fixo resiste
-      } else if (R() > 0.65) continue;
-      const before = dominant(t), stBefore = stageOf(t), n = move(t, def, fl, push);
-      if (!n) continue;
-      changed.add(tk);
-      const name = cellName(tc.c, tc.r);
-      if (def === 'h' && stBefore === 'dominado' && stageOf(t) === 'disputa') events.push(`${FACTION_NAME[f]} retomaram o setor ${name}!`);
-      else if (def === 'h' && stBefore === 'fixo') events.push(`${FACTION_NAME[f]} atacam o setor fixo ${name}.`);
-      else if (dominant(t) !== before) events.push(`${FACTION_NAME[f]} tomaram o setor ${name} dos ${FACTION_NAME[before].toLowerCase()}.`);
+    const fl = f.toLowerCase(), fronts = []; let dom = 0;
+    for (const o of idx.cells) { const k = key(o.c, o.r); if (dominant(sec.get(k)) === f) { dom++; for (const n of idx.nbr.get(k)) if (dominant(sec.get(n)) !== f) fronts.push(n); } }
+    if (!fronts.length || R() > Math.min(0.25, ATTACK_BASE * (1 + dom / 12))) continue;
+    const tk = fronts[Math.floor(R() * fronts.length)], t = sec.get(tk), tc = idx.byKey.get(tk);
+    const def = ['h', 'i', 'r'].filter(x => x !== fl).sort((x, y) => t[y] - t[x])[0];
+    if (!t[def]) continue;
+    let push = 80 + Math.floor(R() * 180);                                       // 0,80% a 2,60% por ataque
+    if (def === 'h') {
+      if (humanCount(sec) <= minHumanSectors && isHuman(t)) continue;           // o último reduto não cai
+      if (t.h >= SCALE) push = Math.round(push * 0.5);                          // setor fixo resiste
     }
+    const before = dominant(t), stBefore = stageOf(t), n = move(t, def, fl, push);
+    if (!n) continue;
+    changed.add(tk);
+    const name = cellName(tc.c, tc.r);
+    if (def === 'h' && stBefore === 'dominado' && stageOf(t) === 'disputa') events.push(`${FACTION_NAME[f]} retomaram o setor ${name}!`);
+    else if (def === 'h' && stBefore === 'fixo') events.push(`${FACTION_NAME[f]} atacam o setor fixo ${name}.`);
+    else if (dominant(t) !== before) events.push(`${FACTION_NAME[f]} tomaram o setor ${name} dos ${FACTION_NAME[before].toLowerCase()}.`);
   }
   return { events, changed: [...changed] };
 }

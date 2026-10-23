@@ -11,7 +11,10 @@ const check = (name, ok, extra) => { console.log(ok ? 'OK   ' : 'FALHA', name, o
 
   check('começa com setores humanos fixos (100%)', human.length >= 5 && human.every(k => W.stageOf(sec.get(k)) === 'fixo'));
   const front = [...sec.keys()].find(k => !W.isHuman(sec.get(k)) && W.attackable(idx, sec, k));
-  check('só dá para atacar setor vizinho do território humano', !!front && !W.attackable(idx, sec, keyOf(5, 9)));
+  const enemyCells = [...sec.keys()].filter(k => !W.isHuman(sec.get(k)));
+  check('começa com 2x2 setores de cada facção, em lados opostos', enemyCells.length === 8 && [...sec.values()].filter(v => v.i === W.SCALE).length === 4 && [...sec.values()].filter(v => v.r === W.SCALE).length === 4 && human.length === sec.size - 8);
+  check('só dá para atacar setor inimigo que encosta nos humanos', !!front && !W.attackable(idx, sec, human[0]));
+  check('mundo salvo com o desenho antigo é reiniciado', W.isOldLayout({ i: 90000, r: 90000 }) && !W.isOldLayout(init));
   check('setor fixo (100%) não é atacável pelos jogadores', human.every(k => !W.attackable(idx, sec, k)));
 
   // estágios: disputa → dominado → fixo
@@ -38,10 +41,13 @@ const check = (name, ok, extra) => { console.log(ok ? 'OK   ' : 'FALHA', name, o
   check('a soma continua 100% em todos os setores', [...sec2.values()].every(v => v.h + v.i + v.r === W.SCALE && v.h >= 0 && v.i >= 0 && v.r >= 0));
 
   // dinamismo: fronteiras entre insetos e robôs surgem sozinhas
-  const sec3 = W.seedSectors(idx); let mixed = 0;
-  for (let t = 0; t < 120; t++) W.warTick(idx, sec3, t + 7);
-  for (const v of sec3.values()) if (W.mixOf(v)) mixed++;
-  check('em ~2 horas de guerra aparecem setores de fronteira (insetos × robôs)', mixed >= 3, 'fronteiras: ' + mixed);
+  const sec3 = W.seedSectors(idx), domCount = () => [...sec3.values()].filter(v => !W.isHuman(v)).length;
+  for (let t = 0; t < 1440; t++) W.warTick(idx, sec3, t + 7);
+  const day1 = domCount();
+  check('em 1 dia a expansão ainda é pequena', day1 <= 12, 'setores inimigos: ' + day1);
+  for (let t = 1440; t < 1440 * 40; t++) W.warTick(idx, sec3, t + 7);
+  const day40 = domCount();
+  check('em ~40 dias os inimigos tomaram alguns setores, mas não o planeta', day40 > 8 && day40 < sec3.size * 0.4, 'setores inimigos: ' + day40);
 
   // setor fixo resiste: avanço inimigo é metade do normal em média
   const fixo = { h: W.SCALE, i: 0, r: 0 }, soft = { h: 9000, i: 1000, r: 0 };
