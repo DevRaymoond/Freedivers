@@ -3,7 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="app-version" content="__VERSION__">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#07090c">
 <title>Multipunk</title>
 <style>
   :root {
@@ -13,7 +16,7 @@
     --mono: Consolas, "Cascadia Mono", monospace;
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; color: var(--text); user-select: none;
+  html, body { margin: 0; height: 100%; height: 100dvh; overscroll-behavior: none; -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; background: var(--bg); overflow: hidden; color: var(--text); user-select: none;
     font-family: "Bahnschrift", "Segoe UI Semibold", "Segoe UI", system-ui, sans-serif; }
   html.nocursor, html.nocursor * { cursor: none !important; }
   canvas#cursorCanvas { position: fixed; inset: 0; z-index: 99999; pointer-events: none; display: none; }
@@ -214,6 +217,55 @@
     .wallet b { font-size: 18px; } #view { padding: 18px 16px; } .ops { grid-template-columns: 1fr; }
     .bottombar { padding: 10px 16px; }
   }
+
+  /* ───────── Celular: controles de toque ───────── */
+  #touchUI { position: fixed; inset: 0; z-index: 25; display: none; touch-action: none; -webkit-user-select: none; user-select: none; }
+  #touchUI.on { display: block; }
+  #stickBase { position: absolute; left: calc(36px + env(safe-area-inset-left)); bottom: 34px; width: 128px; height: 128px; border-radius: 50%; border: 2px solid #ffffff55; background: #ffffff14; opacity: .5; pointer-events: none; }
+  #stickBase.on { opacity: 1; }
+  #stickBase.on { bottom: auto; }
+  #stickKnob { position: absolute; left: 50%; top: 50%; width: 58px; height: 58px; margin: -29px 0 0 -29px; border-radius: 50%; background: #ffffff55; border: 2px solid #fff; }
+  #stickBase.run { border-color: var(--accent); } #stickBase.run #stickKnob { background: var(--accent); border-color: #fff; }
+  .tb { position: absolute; width: 60px; height: 60px; padding: 0; border-radius: 50%; border: 2px solid #ffffff80; background: #10151cc4; color: #fff; display: flex; align-items: center; justify-content: center;
+    font: 700 10px/1 var(--mono); letter-spacing: 1px; touch-action: none; -webkit-user-select: none; user-select: none; backdrop-filter: blur(2px); }
+  .tb b { font-weight: 700; pointer-events: none; }
+  .tb.down { background: #f28c1fb8; border-color: var(--accent); transform: scale(.93); }
+  .tb.big { width: 98px; height: 98px; font-size: 14px; right: calc(26px + env(safe-area-inset-right)); bottom: 34px; background: #ff3b2ed0; border-color: #fff; }
+  .tb.big.down { background: #ff7a3dee; }
+  .tb.roll { right: calc(138px + env(safe-area-inset-right)); bottom: 26px; }
+  .tb.reload { right: calc(126px + env(safe-area-inset-right)); bottom: 98px; }
+  .tb.swap { right: calc(26px + env(safe-area-inset-right)); bottom: 146px; }
+  .tb.sm { width: 50px; height: 50px; font-size: 8px; }
+  .tb.supply { right: calc(212px + env(safe-area-inset-right)); bottom: 52px; }
+  .tb.strike { right: calc(204px + env(safe-area-inset-right)); bottom: 114px; }
+  .tb.pause { right: calc(10px + env(safe-area-inset-right)); top: 10px; width: 44px; height: 44px; font-size: 14px; }
+  #rotate { position: fixed; inset: 0; z-index: 60; display: none; align-items: center; justify-content: center; background: #000e; text-align: center; padding: 30px; color: var(--accent); font-size: 22px; letter-spacing: 6px; text-transform: uppercase; }
+  #rotate small { display: block; margin-top: 10px; font-size: 13px; letter-spacing: 3px; color: var(--dim); }
+  @media (orientation: portrait) { body.touch.ingame #rotate { display: flex; } }
+  body.touch #bottomLeft { left: 50%; transform: translateX(-50%); bottom: 36px; width: min(230px, 30vw); }
+  body.touch #cd { font-size: 10px; text-align: center; margin-top: 3px; }
+  body.touch #xp { bottom: 4px; width: min(300px, 34vw); } body.touch #xp small { font-size: 10px; }
+  body.touch #bottomRight { right: calc(14px + env(safe-area-inset-right)); top: 62px; bottom: auto; }
+  body.touch #ammo { font-size: 26px; } body.touch #ammo small { font-size: 14px; } body.touch #wname { font-size: 11px; } body.touch #kills { font-size: 11px; }
+  body.touch #objective { top: 6px; min-width: 0; width: min(56vw, 460px); } body.touch #objective b { font-size: 13px; letter-spacing: 2px; }
+  body.touch #objective div { font-size: 12px; margin-top: 2px; } body.touch #objective .bar { width: min(200px, 40vw); margin-top: 5px; } body.touch #lives { margin-top: 3px; }
+  body.touch #wp { top: 78px; } body.touch #wp #arrow { border-left-width: 8px; border-right-width: 8px; border-bottom-width: 16px; } body.touch #wp div { font-size: 11px; }
+  body.touch #boss { top: 112px; }
+  body.touch #mods { top: 112px; right: calc(10px + env(safe-area-inset-right)); font-size: 10px; max-width: 160px; }
+  body.touch #party { left: calc(10px + env(safe-area-inset-left)); top: 10px; width: 130px; } body.touch #party .pm { font-size: 11px; margin-bottom: 4px; }
+  body.touch #msg { font-size: 18px; top: 24%; }
+  body.touch #objDone { top: 14%; } body.touch .od-card { padding: 12px 16px 14px; } body.touch .od-card h2 { font-size: 22px; letter-spacing: 2px; } body.touch .od-card p { font-size: 12px; }
+  body.touch .btn { min-height: 44px; }
+  @media (max-height: 520px) {
+    .topbar { padding: 6px 14px; gap: 10px; } .logo { font-size: 16px; letter-spacing: 3px; } .logo .mark { width: 18px; height: 18px; }
+    .tab { padding: 8px 8px; font-size: 11px; letter-spacing: 1px; } .wallet span { font-size: 8px; } .wallet b { font-size: 16px; }
+    #view { padding: 12px 14px; } .bottombar { padding: 6px 14px; } .btn { padding: 9px 16px; font-size: 12px; letter-spacing: 2px; }
+    .ops { grid-template-columns: 250px 1fr; gap: 14px; } .op-list { gap: 5px; } .op-item { padding: 7px 10px; } .op-item b { font-size: 14px; }
+    .op-banner { height: 80px; } .op-detail { min-height: 0; } .op-body { padding: 4px 16px 14px; gap: 10px; } .op-body h3 { font-size: 20px; }
+    .res-card { padding: 16px 22px; } .res-badge { font-size: 28px; letter-spacing: 8px; } .res-card h2 { font-size: 22px; margin-bottom: 10px; } .res-total b { font-size: 34px; } .res-total i { font-size: 30px; }
+    .res-row { padding: 5px 4px; font-size: 13px; } .loot-card { padding: 16px 20px; } .loot-card h3 { font-size: 22px; }
+    .roomcode { font-size: 32px; letter-spacing: 8px; } .grid { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+  }
 </style>
 </head>
 <body>
@@ -239,6 +291,7 @@
   </div>
 </div>
 <div id="objDone"><div class="od-card"><small id="odKick">OBJETIVO CONCLUÍDO</small><h2 id="odTitle"></h2><div class="od-line"></div><p id="odText"></p></div></div>
+<div id="rotate"><div>Gire o aparelho<small>Jogue na horizontal</small></div></div>
 <div id="fade"></div>
 <div id="clickGo"><div>Clique para entrar na operação<small>O mouse fica preso à tela. ESC abre o menu (o jogo continua para os outros).</small></div></div>
 

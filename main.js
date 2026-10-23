@@ -3,6 +3,9 @@ import { GLTFLoader } from './lib/jsm/loaders/GLTFLoader.js';
 import { clone as cloneSkeleton } from './lib/jsm/utils/SkeletonUtils.js';
 import { net } from './net.js';
 
+// Celular/tablet: tela de toque como entrada principal (ou ?touch=1 para testar no computador)
+const isTouch = new URLSearchParams(location.search).has('touch') || (matchMedia('(pointer: coarse)').matches && navigator.maxTouchPoints > 0);
+
 // ───────────────────────── Configuração ─────────────────────────
 let ARENA_R = 95;
 const PLAYER = { speed: 7, sprint: 10.5, walk: 3.4, rollSpeed: 18, rollTime: 0.45, rollCooldown: 1.0, maxHp: 100 };
@@ -82,7 +85,7 @@ const XP_VALUES = { crawler: 6, spitter: 10, bomber: 12, charger: 26, brute: 60,
 
 // ───────────────────────── Cena ─────────────────────────
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(devicePixelRatio, isTouch ? 1.5 : 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -1419,7 +1422,7 @@ function startMission(id, levelArg) {
   }
   state = 'playing'; uiOpen = false;
   say(id === 'operation' ? 'Siga até o gerador. Cuidado com os pelotões.' : 'Boa sorte, soldado.', 3);
-  renderer.domElement.requestPointerLock();
+  captureInput();
 }
 function resetLocalPlayer() {
   $('kills').textContent = 'Abates: 0';
@@ -1627,7 +1630,11 @@ function renderUpgrades() {
   });
 }
 function renderKeys() {
-  const rows = [
+  const rows = isTouch ? [
+    ['JOYSTICK (esquerda)', 'Mover em qualquer direção — suave anda devagar, até a borda corre rápido'], ['ARRASTAR (direita)', 'Mirar'],
+    ['FOGO', 'Atirar — segure e arraste o dedo para mirar atirando'], ['DASH', 'Esquiva'], ['RECAR.', 'Recarregar (também correndo)'],
+    ['ARMA', 'Trocar de arma'], ['SUPR.', 'Chamar suprimentos'], ['ORBITAL', 'Ataque orbital'], ['II', 'Pausar'],
+  ] : [
     ['W A S D', 'Mover em qualquer direção — a mira não muda'], ['MOUSE', 'Mirar'], ['CLIQUE', 'Atirar'], ['SHIFT', 'Correr rápido'],
     ['C', 'Andar devagar (pelotões te notam menos)'], ['R', 'Recarregar (também correndo)'], ['ESPAÇO', 'Dash / esquiva'],
     ['1 · 2 · 3 / RODA', 'Trocar de arma'], ['E', 'Chamar suprimentos'], ['Q', 'Ataque orbital'], ['ESC', 'Pausar'],
@@ -1650,12 +1657,107 @@ function buildMenu() {
   $('tabs').innerHTML = TABS.map(([id, label]) => `<button class="tab" data-tab="${id}">${label}</button>`).join('');
   $('view').innerHTML = TABS.map(([id]) => `<section class="pane" id="pane-${id}"></section>`).join('');
   document.querySelectorAll('.tab').forEach(b => b.onclick = () => showTab(b.dataset.tab));
-  $('resume').onclick = () => { renderer.domElement.requestPointerLock(); };
+  $('resume').onclick = () => captureInput();
   $('abort').onclick = abortMission;
   $('resBtn').onclick = () => { $('results').classList.remove('on'); $('menu').classList.remove('hidden'); $('sub').textContent = net.role === 'solo' ? 'Pronto para o deploy.' : `Sala ${net.code} · aguardando a próxima operação`; $('resume').style.display = 'none'; $('abort').style.display = 'none'; clearWorld(); renderAll(); };
-  $('clickGo').onclick = () => { renderer.domElement.requestPointerLock(); };
+  $('clickGo').onclick = () => captureInput();
   setNameTag(playerGroup, myName());
+  if (isTouch) buildTouchUI();
   renderAll(); showTab('ops');
+}
+
+// ───────────────────────── Controles de toque (celular) ─────────────────────────
+// Estilo atirador mobile: joystick flutuante à esquerda (move), arrastar à direita (mira), botão FOGO grande (segure e arraste
+// para mirar atirando) e botões de dash, recarga, arma, suprimentos e orbital. Vários dedos ao mesmo tempo (pointer events).
+const touch = { x: 0, y: 0, mag: 0 };
+const TOUCH_LOOK = 0.0052;
+let touchResetFn = null;
+function buildTouchUI() {
+  document.body.classList.add('touch');
+  const ui = document.createElement('div'); ui.id = 'touchUI';
+  ui.innerHTML = `<div id="stickBase"><i id="stickKnob"></i></div>
+    <button class="tb pause" data-act="pause">II</button>
+    <button class="tb big" data-act="fire"><b>FOGO</b></button>
+    <button class="tb roll" data-act="roll"><b>DASH</b></button>
+    <button class="tb reload" data-act="reload"><b>RECAR.</b></button>
+    <button class="tb swap" data-act="swap"><b id="tbSwapT">ARMA 1</b></button>
+    <button class="tb sm supply" data-act="supply"><b>SUPR.</b></button>
+    <button class="tb sm strike" data-act="strike"><b>ORBITAL</b></button>`;
+  document.body.appendChild(ui);
+  const base = $('stickBase'), knob = $('stickKnob'), R = 64;
+  const pts = new Map();                       // pointerId -> { role, el, ox, oy, x, y }
+  const live = () => state === 'playing' && !uiOpen;
+  let fires = 0, on = false, fsTries = 0;
+  const fullscreen = () => {
+    if (document.fullscreenElement || fsTries >= 3) return; fsTries++;
+    try { const p = document.documentElement.requestFullscreen && document.documentElement.requestFullscreen(); p && p.catch && p.catch(() => {}); } catch { /* ok */ }
+    try { const q = screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape'); q && q.catch && q.catch(() => {}); } catch { /* ok */ }
+  };
+  const act = a => {
+    if (a === 'pause') lockChanged(false);
+    else if (a === 'roll') tryRoll();
+    else if (a === 'reload') startReload();
+    else if (a === 'swap') switchWeapon((player.weapon + 1) % WEAPONS.length);
+    else if (a === 'supply') callSupply();
+    else if (a === 'strike') callStrike();
+  };
+  const look = (dx, dy) => {
+    if (!live()) return;
+    player.yaw -= dx * TOUCH_LOOK;
+    player.pitch = Math.max(-0.6, Math.min(0.8, player.pitch - dy * TOUCH_LOOK));
+  };
+  const stick = (p, e) => {
+    let dx = e.clientX - p.ox, dy = e.clientY - p.oy;
+    const len = Math.hypot(dx, dy), k = Math.min(1, len / R);
+    if (len > R) { dx *= R / len; dy *= R / len; }
+    touch.x = dx / R; touch.y = -dy / R; touch.mag = k;
+    keys.ShiftLeft = k > 0.92; keys.KeyC = k > 0.12 && k < 0.45;     // borda = correr rápido, suave = andar devagar
+    knob.style.transform = `translate(${dx}px, ${dy}px)`; base.classList.toggle('run', keys.ShiftLeft);
+  };
+  const reset = () => {
+    pts.forEach(p => p.el && p.el.classList.remove('down')); pts.clear();
+    touch.x = touch.y = touch.mag = 0; keys.ShiftLeft = false; keys.KeyC = false; fires = 0; mouseDown = false;
+    knob.style.transform = ''; base.classList.remove('on', 'run'); base.style.left = base.style.top = '';
+  };
+  touchResetFn = reset;
+  ui.addEventListener('pointerdown', e => {
+    if (!live()) return;
+    e.preventDefault(); fullscreen();
+    try { ui.setPointerCapture(e.pointerId); } catch { /* ok */ }
+    const btn = e.target.closest('[data-act]');
+    if (btn) {
+      const a = btn.dataset.act;
+      btn.classList.add('down');
+      if (a === 'fire') { pts.set(e.pointerId, { role: 'look', el: btn, x: e.clientX, y: e.clientY, fire: true }); fires++; mouseDown = true; player.clickT = 0.2; }
+      else { pts.set(e.pointerId, { role: 'btn', el: btn }); act(a); }
+    } else if (e.clientX < innerWidth * 0.5 && ![...pts.values()].some(p => p.role === 'stick')) {
+      const ox = Math.max(R + 12, Math.min(innerWidth * 0.5 - R, e.clientX)), oy = Math.max(R + 12, Math.min(innerHeight - R - 12, e.clientY));
+      base.style.left = `${ox - base.offsetWidth / 2}px`; base.style.top = `${oy - base.offsetHeight / 2}px`; base.classList.add('on');
+      const p = { role: 'stick', ox, oy }; pts.set(e.pointerId, p); stick(p, e);
+    } else pts.set(e.pointerId, { role: 'look', x: e.clientX, y: e.clientY });
+  });
+  ui.addEventListener('pointermove', e => {
+    const p = pts.get(e.pointerId); if (!p) return;
+    e.preventDefault();
+    if (p.role === 'stick') stick(p, e);
+    else if (p.role === 'look') { look(e.clientX - p.x, e.clientY - p.y); p.x = e.clientX; p.y = e.clientY; }
+  });
+  const up = e => {
+    const p = pts.get(e.pointerId); if (!p) return;
+    pts.delete(e.pointerId);
+    if (p.el) p.el.classList.remove('down');
+    if (p.fire && --fires <= 0) { fires = 0; mouseDown = false; }
+    if (p.role === 'stick') { touch.x = touch.y = touch.mag = 0; keys.ShiftLeft = false; keys.KeyC = false; knob.style.transform = ''; base.classList.remove('on', 'run'); base.style.left = base.style.top = ''; }
+  };
+  ui.addEventListener('pointerup', up); ui.addEventListener('pointercancel', up);
+  ui.addEventListener('contextmenu', e => e.preventDefault());
+  document.addEventListener('contextmenu', e => e.preventDefault());
+  // mostra os controles só quando dá para jogar; some (e solta tudo) em menu, pausa, sorteio, morte e cinemática
+  setInterval(() => {
+    const now = live();
+    if (now !== on) { on = now; ui.classList.toggle('on', on); document.body.classList.toggle('ingame', on); if (!on) reset(); }
+    if (on) $('tbSwapT').textContent = `ARMA ${player.weapon + 1}`;
+  }, 100);
 }
 
 // ───────────────────────── Entrada ─────────────────────────
@@ -1680,8 +1782,13 @@ addEventListener('mousemove', e => {
   player.yaw -= e.movementX * 0.0022;
   player.pitch = Math.max(-0.6, Math.min(0.8, player.pitch - e.movementY * 0.0022));
 });
-document.addEventListener('pointerlockchange', () => {
-  const locked = document.pointerLockElement === renderer.domElement;
+// No PC o "foco" do jogo é o ponteiro preso; no celular não existe: a pausa vira um botão na tela.
+const inputLive = () => isTouch ? (state === 'playing' && !uiOpen) : document.pointerLockElement === renderer.domElement;
+function captureInput() {
+  if (isTouch) lockChanged(true); else renderer.domElement.requestPointerLock();
+}
+document.addEventListener('pointerlockchange', () => lockChanged(document.pointerLockElement === renderer.domElement));
+function lockChanged(locked) {
   if (net.role !== 'solo' && mission && ['playing', 'loot', 'dying', 'downed'].includes(state)) {
     // online o jogo não pausa: o menu só abre por cima e você fica parado
     uiOpen = !locked;
@@ -1701,7 +1808,7 @@ document.addEventListener('pointerlockchange', () => {
     state = 'playing';
     $('menu').classList.add('hidden');
   }
-});
+}
 addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
   camera.aspect = innerWidth / innerHeight;
@@ -1725,14 +1832,19 @@ function startReload() {
   if (mixer) trigger('Reload', actions.Reload.getClip().duration / w.reload);
   beep(300, 0.1);
 }
+function inputDir(f, r, kk) {
+  const d = new THREE.Vector3();
+  if (kk.KeyW) d.add(f);
+  if (kk.KeyS) d.sub(f);
+  if (kk.KeyD) d.add(r);
+  if (kk.KeyA) d.sub(r);
+  if (isTouch && !uiOpen && touch.mag > 0.12) d.addScaledVector(f, touch.y).addScaledVector(r, touch.x);
+  return d;
+}
 function tryRoll() {
   if (player.rolling > 0 || player.rollCd > 0) return;
   const f = fwdOf(player.yaw), r = rightOf(player.yaw);
-  const d = new THREE.Vector3();
-  if (keys.KeyW) d.add(f);
-  if (keys.KeyS) d.sub(f);
-  if (keys.KeyD) d.add(r);
-  if (keys.KeyA) d.sub(r);
+  const d = inputDir(f, r, keys);
   if (d.lengthSq() === 0) d.copy(f).multiplyScalar(-1);
   player.rollDir.copy(d.normalize());
   player.rolling = PLAYER.rollTime;
@@ -1979,11 +2091,7 @@ function updatePlayer(dt) {
   } else {
     playerGroup.scale.y = 1;
     const f = fwdOf(player.yaw), r = rightOf(player.yaw);
-    const mv = new THREE.Vector3();
-    if (kk.KeyW) mv.add(f);
-    if (kk.KeyS) mv.sub(f);
-    if (kk.KeyD) mv.add(r);
-    if (kk.KeyA) mv.sub(r);
+    const mv = inputDir(f, r, kk);
     if (mv.lengthSq() > 0) {
       mv.normalize();
       const mf = mv.dot(f), mr = mv.dot(r);
@@ -2003,7 +2111,7 @@ function updatePlayer(dt) {
   resolvePlane(player.pos);
 
   const wantFire = curW().auto ? mouseDown : player.clickT > 0;
-  if (wantFire && document.pointerLockElement === renderer.domElement
+  if (wantFire && inputLive()
       && player.fireCd <= 0 && player.reloading <= 0 && player.mag > 0 && player.rolling <= 0) shoot();
 
   if (relax && elapsed - player.lastHit > 5 && player.hp < maxHp()) player.hp = Math.min(maxHp(), player.hp + 6 * dt);
@@ -2253,7 +2361,7 @@ function updateHud() {
   $('oBar').style.width = Math.min(100, mission.progress * 100) + '%';
   const sup = player.supplyCd > 0 ? `${Math.ceil(player.supplyCd)}s` : 'pronto';
   const orb = player.strikeCd > 0 ? `${Math.ceil(player.strikeCd)}s` : 'pronto';
-  $('cd').textContent = `Suprimentos (E): ${sup} · Orbital (Q): ${orb}`;
+  $('cd').textContent = isTouch ? `Suprimentos: ${sup} · Orbital: ${orb}` : `Suprimentos (E): ${sup} · Orbital (Q): ${orb}`;
   if (mission.id === 'queen' && mission.boss) $('bossBar').style.width = Math.max(0, mission.boss.hp / mission.boss.maxHp * 100) + '%';
   $('xpBar').style.width = Math.min(100, xp / xpNeed * 100) + '%';
   $('lvl').textContent = `NV ${level} · XP ${Math.floor(xp)} / ${xpNeed}`;
@@ -2550,7 +2658,8 @@ function clientStartMission(d) {
   checkpoint.copy(player.pos);
   afterMissionBuilt(d.id);
   state = 'playing'; uiOpen = true;
-  $('clickGo').classList.add('on');                         // o navegador exige um clique para capturar o mouse
+  if (isTouch) captureInput();
+  else $('clickGo').classList.add('on');                    // o navegador exige um clique para capturar o mouse
   say('Operação iniciada!', 3);
 }
 
@@ -2649,7 +2758,7 @@ let cursorOn = null;
 function loop() {
   requestAnimationFrame(loop);
   const now = performance.now(); tick(Math.min(0.05, (now - lastFrame) / 1000)); lastFrame = now;
-  const want = state === 'menu' || state === 'paused' || state === 'ended';
+  const want = !isTouch && (state === 'menu' || state === 'paused' || state === 'ended');
   if (want !== cursorOn) { cursorOn = want; window.__cursor && window.__cursor.show(want); }
   renderer.render(scene, camera);
 }

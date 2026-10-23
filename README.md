@@ -52,6 +52,10 @@ WASD mover em qualquer direção (a mira não muda) · Mouse mirar · Clique ati
 R recarregar (também correndo) · Espaço dash · 1/2/3 ou roda do mouse trocam de arma · E suprimentos · Q ataque orbital · Esc menu
 (online o jogo **não** pausa quando você abre o menu).
 
+**Celular / tablet:** o jogo detecta a tela de toque sozinho (use `?touch=1` na URL para testar no PC) e mostra controles estilo atirador mobile,
+em tela cheia na horizontal: joystick flutuante à esquerda (suave anda devagar, na borda corre rápido), arrastar o dedo à direita para mirar,
+botão **FOGO** grande (segure e arraste para mirar atirando) e botões DASH, RECAR., ARMA, SUPR., ORBITAL e pausa (II). Vários dedos ao mesmo tempo.
+
 ## Progressão
 - XP por inimigo (equipe); cada nível exige o dobro do anterior. Ao subir há um sorteio às escuras: em geral piora a dificuldade, às vezes dá bônus ou ajuda para todos.
 - Pontuação (baixa de propósito): missão, tempo, abates, precisão e nível; perde por mortes, suprimentos e orbitais. Rank D–S. A pontuação é da equipe; os créditos são individuais.
