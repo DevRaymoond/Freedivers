@@ -8,3 +8,4 @@
 
 - 2026-10-23: usuário adicionou corredor, empurrador e titã (zips do Tripo em Downloads, extraídos em `tools/source/mA|mB|mC`) e pediu validação de pernas, igualdade, cor e tamanho; resultado em `tools/validar_modelos.md`. Titã ácido ganhou rig e animações (andar lento, pisada, jato de ácido estilo Bile Titan) e entrou no jogo para os insetos (nível 6+). Corredor e empurrador seguem só validados.
 - 2026-10-23: mapa do modo online/Novo jogo deve ser grande, com zoom e painel lateral pequeno e simples.
+- 2026-10-23: menu: Novo jogo virou Mapa e Modo online virou Comunicações. Fronteiras: duas barras (insetos × robôs e avanço humano em azul); dominado (50%+) exige erradicar os inimigos até 100% (fixo); setores atrás de território humano ficam fora do alcance das facções; interface não deve explicar detalhes técnicos ao jogador.

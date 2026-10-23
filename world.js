@@ -5,7 +5,7 @@ const path = require('path');
 
 const MIN_WIN_SECONDS = Number(process.env.MIN_WIN_SECONDS) || 60;       // vitória mais rápida que isso é descartada (antifraude)
 const MIN_LOSS_SECONDS = 90;
-const TICK_MS = (Number(process.env.WAR_TICK_MIN) || 5) * 60000;
+const TICK_MS = (Number(process.env.WAR_TICK_MIN) || 1) * 60000;
 
 async function createWorld(store, onChange) {
   const W = await import('./worldlogic.mjs');
@@ -63,11 +63,12 @@ async function createWorld(store, onChange) {
       if (!s || b.season !== season) { await store.finishBattle(b.id, 'abort', 0, [], season, 0); return { ok: false, reason: 'temporada encerrada' }; }
       if (win && secs < MIN_WIN_SECONDS) { await store.finishBattle(b.id, 'abort', 0, [], season, 0); return { ok: false, reason: 'rápido demais' }; }
       if (!win && secs < MIN_LOSS_SECONDS) { await store.finishBattle(b.id, 'abort', 0, [], season, 0); return { ok: true, delta: 0 }; }
-      const before = W.dominant(s);
+      const before = W.dominant(s), stBefore = W.stageOf(s);
       let delta, events = [];
       if (win) {
         delta = W.applyWin(s, b.mission, b.level);
-        events.push(W.isHuman(s) && before !== 'H' ? `Setor ${name} libertado dos ${W.FACTION_NAME[before].toLowerCase()}! (+${W.pct2(delta)})` : `Os jogadores avançaram ${W.pct2(delta)} em ${name}.`);
+        const ev = W.stageEvent(name, stBefore, W.stageOf(s));
+        events.push(ev ? `${ev} (+${W.pct2(delta)})` : `Os jogadores avançaram ${W.pct2(delta)} em ${name}.`);
       } else {
         delta = W.applyLoss(s, b.mission, b.level);
         events.push(`A operação em ${name} falhou. O inimigo recuperou ${W.pct2(-delta)} do setor.`);

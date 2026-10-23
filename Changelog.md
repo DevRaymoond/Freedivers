@@ -17,3 +17,8 @@
 - Validados corredor, empurrador e titã (`tools/validar_modelos.md`): contagem de pernas, simetria, cor e tamanho. O titã veio com 5 pernas e foi corrigido para 6.
 - Novo inimigo **Titã ácido** (`assets/titan.glb`, `tools/build_titan.py`): rig de 20 ossos e ações Idle, Walk, Stomp e Jet; IA de pisada em área e jato de ácido; sincronizado em rede (estados `stomp`/`jet` e projétil de ácido).
 - Mapa maior com **zoom** (roda, pinça e botões), arrastar para mover e painel lateral compacto; mapa em resolução cheia (1254 px).
+
+## 2026-10-23 (guerra dinâmica e estágios)
+- Menu renomeado: **Novo jogo → Mapa** e **Modo online → Comunicações**; o mundo online virou a aba *Mundo online* dentro de Mapa (sem login só mostra; com login ataca e joga em esquadrão).
+- Estágios do setor (disputa, dominado, fixo), missões de erradicar e defender, setor atrás de território humano fora do alcance dos inimigos; setor fixo resiste ao avanço inimigo.
+- Guerra mais dinâmica (passo a cada minuto, vários ataques por facção, fronteiras entre insetos e robôs) e interface com duas barras (luta entre as facções + avanço humano) e brilho nos setores que mudaram. `tools/test_world.js` cobre as regras.

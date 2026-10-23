@@ -392,6 +392,19 @@
   .camp-news summary { cursor: pointer; font-size: 12px; letter-spacing: 3px; text-transform: uppercase; color: var(--dim); } .camp-news .camp-log { margin-top: 6px; max-height: 120px; }
   .frontier { margin: 6px 0; padding: 4px 8px; font-size: 11px; }
   @media (max-width: 900px) { .camp { grid-template-columns: 1fr; } canvas#campCv, canvas#onlCv, canvas#mapCv { height: 62vh; } .camp-side { max-height: none; } }
+
+  /* ───────── Duas barras: luta entre as facções e avanço humano ───────── */
+  .bar2 { margin: 8px 0 10px; } .b2-h { display: flex; justify-content: space-between; align-items: baseline; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--dim); } .b2-h small { margin: 0 !important; font-family: var(--mono); letter-spacing: 0; text-transform: none; color: var(--text); }
+  .fightbar, .humanbar { position: relative; display: flex; height: 12px; margin: 4px 0 3px; background: #0009; border: 1px solid var(--line2); }
+  .fightbar i { display: block; height: 100%; transition: width .6s; }
+  .humanbar i { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, #1f7fc4, var(--blue)); transition: width .6s; }
+  .humanbar em { position: absolute; top: 0; bottom: 0; background: repeating-linear-gradient(45deg, #ffe14acc 0 6px, #ffe14a55 6px 12px); }
+  .humanbar u { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ok); }
+  .b2-l { display: flex; justify-content: space-between; font-size: 11px; font-family: var(--mono); color: var(--dim); } .b2-l b { font-weight: 600; }
+  .b2-m { display: block; margin-top: 3px !important; color: #b8c4d2 !important; } .b2-m b { color: var(--accent); }
+  .up { color: var(--ok); } .dn { color: var(--danger); }
+  .stage { padding: 1px 7px; border: 1px solid; font-family: var(--mono); font-size: 10px; letter-spacing: 1px; }
+  .st-disputa { color: #ff9a5a; border-color: #ff9a5a; } .st-dominado { color: var(--blue); border-color: var(--blue); } .st-fixo { color: var(--ok); border-color: var(--ok); }
 </style>
 </head>
 <body>

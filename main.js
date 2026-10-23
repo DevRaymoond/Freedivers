@@ -1625,7 +1625,7 @@ function afterMissionBuilt(id) {
   $('bossName').textContent = FT('Rainha da colmeia').toUpperCase();
   $('hud').classList.add('on');
   $('sectorLine').style.display = campSector ? '' : 'none';
-  if (campSector) $('sectorLine').innerHTML = `SETOR ${campSector.name} · liberação <b>${WL.pct2(campSector.h)}</b> de ${WL.pct2(WL.HUMAN_MIN)} · vitória <b>+${WL.pct2(campSector.gain)}</b>`;
+  if (campSector) $('sectorLine').innerHTML = campSector.h >= WL.HUMAN_MIN ? `SETOR ${campSector.name} · erradicação <b>${WL.pct2(campSector.h)}</b> de ${WL.pct2(WL.SCALE)} · vitória <b>+${WL.pct2(campSector.gain)}</b>` : `SETOR ${campSector.name} · liberação <b>${WL.pct2(campSector.h)}</b> de ${WL.pct2(WL.HUMAN_MIN)} · vitória <b>+${WL.pct2(campSector.gain)}</b>`;
   $('menu').classList.add('hidden'); $('results').classList.remove('on');
   $('resume').style.display = 'none'; $('abort').style.display = 'none';
 }
@@ -1664,8 +1664,9 @@ function abortMission() {
 
 // ───────────────────────── Mapa-múndi: campanha local e mundo online ─────────────────────────
 // Cada quadrado de terra do continente é uma operação; três forças (humanos H, insetos I, robôs R) têm uma porcentagem de domínio em cada um.
-// • NOVO JOGO = campanha local: você contra o resto do mapa, sem conta, salva neste aparelho (WLOC).
-// • MODO ONLINE = mundo compartilhado por todos os jogadores, mantido no servidor e mostrado ao vivo (WNET). Precisa de login.
+// • MAPA → CAMPANHA = campanha local: você contra o resto do mapa, sem conta, salva neste aparelho (WLOC).
+// • MAPA → MUNDO ONLINE = mundo compartilhado por todos os jogadores, mantido no servidor e mostrado ao vivo (WNET). Atacar precisa de login; sem login só dá para ver (WMAP).
+// • COMUNICAÇÕES = amigos, conversas, jogados recentemente e sala por código.
 const AUTH = { enabled: false, user: null };
 const GEO = { n: 24, cells: [], idx: null, img: null };
 const mkWorld = (id, remote) => ({ id, remote, sec: new Map(), init: { i: 1, r: 1 }, season: 1, turn: 0, log: [], timeOffset: 0, sel: null, pending: null, squads: [] });
@@ -1696,36 +1697,49 @@ async function loadWorld() {
 function ensureLocalCampaign() {
   const C = save.campaign;
   if (C && C.sec && Object.keys(C.sec).length === GEO.cells.length) {
-    Object.assign(WLOC, { sec: WL.unpackSectors(C.sec), init: C.init, turn: C.turn, log: C.log || [], season: C.season || 1 }); return;
+    Object.assign(WLOC, { sec: WL.unpackSectors(C.sec), init: C.init, turn: C.turn, log: C.log || [], season: C.season || 1, lastTick: C.lastTick || Date.now() }); localWarCatchUp(); return;
   }
   const sec = WL.seedSectors(GEO.idx);
   Object.assign(WLOC, { sec, init: WL.initTotals(sec), turn: 0, season: 1, log: [{ t: 0, m: 'Cabeça de ponte estabelecida. Insetos e robôs disputam o continente.' }] });
   saveLocalCampaign();
 }
-function saveLocalCampaign() { save.campaign = { sec: WL.packSectors(WLOC.sec), init: WLOC.init, turn: WLOC.turn, log: WLOC.log, season: WLOC.season }; persist(); }
+function saveLocalCampaign() { save.campaign = { sec: WL.packSectors(WLOC.sec), init: WLOC.init, turn: WLOC.turn, log: WLOC.log, season: WLOC.season, lastTick: WLOC.lastTick || Date.now() }; persist(); }
 function applyServerWorld(d, full) {                              // mundo compartilhado: tudo vem do servidor
   if (full) WNET.sec = WL.unpackSectors(d.sectors);
-  else for (const [k, v] of Object.entries(d.sectors || {})) WNET.sec.set(k, { h: v[0], i: v[1], r: v[2] });
+  else for (const [k, v] of Object.entries(d.sectors || {})) { const nw = { h: v[0], i: v[1], r: v[2] }, old = WNET.sec.get(k); if (old) noteTrend(WNET, k, old, nw); WNET.sec.set(k, nw); }
   Object.assign(WNET, { init: d.init || WNET.init, season: d.season, turn: d.turn, log: d.log || [] });
   if (d.now) WNET.timeOffset = d.now - Date.now();
   WMAP.sec = WNET.sec; Object.assign(WMAP, { init: WNET.init, season: WNET.season, turn: WNET.turn, log: WNET.log, timeOffset: WNET.timeOffset });
-  if (onlineTabIsMap()) renderCampaign(WNET); else drawCampaign(WNET);
-  if ($('pane-map') && $('pane-map').classList.contains('on')) renderCampaign(WMAP);
+  if (worldPaneOn()) renderWorldPane(); else drawCampaign(WNET);
 }
 // local: resultado da operação + um passo da guerra
-function campaignResult(k, win, level, party) {
+function logLocal(msgs) { for (const m of msgs) WLOC.log.unshift({ t: WLOC.turn, m }); WLOC.log.length = Math.min(WLOC.log.length, 14); }
+function campaignResult(k, win, level, party) {          // resultado da operação (a guerra em si anda sozinha, no relógio)
   const W = WLOC, o = GEO.idx.byKey.get(k), s = W.sec.get(k); if (!o || !s) return;
-  const name = cellName(o), before = WL.dominant(s), ev = [];
+  const name = cellName(o), old = { ...s }, st0 = WL.stageOf(s), ev = [];
   const mid = (mission && mission.id) || 'operation';
-  if (win) { const d = WL.applyWin(s, mid, level); ev.push(WL.isHuman(s) && before !== 'H' ? `Setor ${name} libertado dos ${OWN[before].name.toLowerCase()}! (+${WL.pct2(d)})` : `Os jogadores avançaram ${WL.pct2(d)} em ${name}.`); }
+  if (win) { const d = WL.applyWin(s, mid, level), e = WL.stageEvent(name, st0, WL.stageOf(s)); ev.push(e ? `${e} (+${WL.pct2(d)})` : `Os jogadores avançaram ${WL.pct2(d)} em ${name}.`); }
   else { const d = WL.applyLoss(s, mid, level); ev.push(`A operação em ${name} falhou. O inimigo recuperou ${WL.pct2(-d)} do setor.`); }
-  W.turn++;
-  ev.push(...WL.warTick(GEO.idx, W.sec, WL.hash2(W.season, W.turn)).events);
+  noteTrend(W, k, old, s);
   if (win && WL.campaignWon(W.sec)) ev.push('O continente é dos jogadores. Campanha vencida!');
-  for (const m of ev) W.log.unshift({ t: W.turn, m });
-  W.log.length = Math.min(W.log.length, 14);
-  saveLocalCampaign();
+  logLocal(ev); saveLocalCampaign();
 }
+// Guerra da campanha local: um passo por minuto enquanto o jogo está aberto (e os passos que passaram enquanto esteve fechado, até 12)
+function localWarStep() {
+  const W = WLOC, before = new Map([...W.sec].map(([k, v]) => [k, { ...v }]));
+  W.turn++;
+  const r = WL.warTick(GEO.idx, W.sec, WL.hash2(W.season, W.turn));
+  for (const k of r.changed) noteTrend(W, k, before.get(k), W.sec.get(k));
+  logLocal(r.events);
+}
+function localWarCatchUp() {
+  if (!GEO.idx || !WLOC.sec.size) return;
+  const now = Date.now(), last = WLOC.lastTick || now, n = Math.min(12, Math.floor((now - last) / 60000));
+  WLOC.lastTick = n ? now - ((now - last) % 60000) : last;
+  for (let i = 0; i < n; i++) localWarStep();
+  if (n) { saveLocalCampaign(); if ($('pane-camp') && $('pane-camp').classList.contains('on')) renderCampaign(WLOC); }
+}
+setInterval(() => { if (document.hidden || !GEO.idx || !WLOC.sec.size || missionBusy() || AUTH.enabled && AUTH.user && false) return; localWarCatchUp(); }, 15000);
 let campParty = 1;
 // ───────── mapa com zoom: roda do mouse / pinça / botões; arrastar move; toque seleciona ─────────
 const MAPU = 1000;                                              // o mapa tem 1000 unidades de lado; a escala em tela vem de view.k
@@ -1763,6 +1777,11 @@ function drawCampaign(W) {
       let bx = x + px(2); const bw = cs - px(4), bh = px(huge ? 7 : 4), by = y + cs - bh - px(2);
       for (const [val, c] of [[sc.h, OWN.H.color], [sc.i, OWN.I.color], [sc.r, OWN.R.color]]) { if (!val) continue; ctx.fillStyle = c; ctx.fillRect(bx, by, bw * val / WL.SCALE, bh); bx += bw * val / WL.SCALE; }
     }
+    if (sc.i > 0 && sc.r > 0) {                                       // fronteira: faixa com a luta insetos × robôs
+      const et = sc.i + sc.r, bh = px(huge ? 7 : 4); ctx.fillStyle = OWN.I.color; ctx.fillRect(x + px(2), y + px(2), (cs - px(4)) * sc.i / et, bh); ctx.fillStyle = OWN.R.color; ctx.fillRect(x + px(2) + (cs - px(4)) * sc.i / et, y + px(2), (cs - px(4)) * sc.r / et, bh);
+    }
+    const tr = trendOf(W, ckey(o));
+    if (tr) { ctx.globalAlpha = 0.35 + 0.65 * Math.abs(Math.sin(Date.now() / 260)); ctx.strokeStyle = OWN[tr.win === 'h' ? 'H' : tr.win.toUpperCase()].color; ctx.lineWidth = px(3); ctx.strokeRect(x + px(2), y + px(2), cs - px(4), cs - px(4)); ctx.globalAlpha = 1; }
     if (canAttack && attackable(W, o)) { ctx.strokeStyle = '#ffe14a'; ctx.lineWidth = px(2); ctx.strokeRect(x + px(3), y + px(3), cs - px(6), cs - px(6)); }
     const label = (txt, ox, oy, size, align = 'center') => {
       ctx.font = `bold ${px(size)}px sans-serif`; ctx.textAlign = align; ctx.textBaseline = 'middle';
@@ -1774,6 +1793,12 @@ function drawCampaign(W) {
   }
   if (W.sel) { const x = W.sel.c * cs, y = W.sel.r * cs; ctx.strokeStyle = '#fff'; ctx.lineWidth = px(3); ctx.strokeRect(x + px(1), y + px(1), cs - px(2), cs - px(2)); }
 }
+setInterval(() => {                                       // mantém o brilho das mudanças recentes pulsando
+  for (const W of [WLOC, WNET, WMAP]) {
+    const visible = W === WLOC ? $('pane-camp') && $('pane-camp').classList.contains('on') : worldPaneOn() && worldW() === W;
+    if (visible && hasTrend(W)) drawCampaign(W);
+  }
+}, 220);
 function bindMapInput(W) {
   const cv = $(W.id + 'Cv'); if (!cv) return;
   const ptrs = new Map(); let drag = null, pinch = 0, moved = false;
@@ -1814,12 +1839,15 @@ function bindMapInput(W) {
   zb('ZIn', 1.5); zb('ZOut', 1 / 1.5); zb('ZReset', 0);
   if (!cv._ro && window.ResizeObserver) { cv._ro = new ResizeObserver(() => drawCampaign(W)); cv._ro.observe(cv); }
 }
+const worldPaneOn = () => !!$('pane-world') && $('pane-world').classList.contains('on');
+const worldW = () => (AUTH.enabled && AUTH.user ? WNET : WMAP);
+const renderWorldPane = () => renderCampaign(worldW());
 function renderCampaign(W) {
-  const host = W === WMAP ? $('pane-map') : W.remote ? $('onlMap') : $('pane-camp'); if (!host) return;
-  const head = W === WMAP ? subNav('map') : W.remote ? '' : subNav('camp');
+  const host = W === WLOC ? $('pane-camp') : $('pane-world'); if (!host) return;
+  const head = (W === WLOC ? subNav('camp') : subNav('world')) + (W === WNET ? squadBar() : '');
   if (!worldReady(W)) {
-    host.innerHTML = `${head}<h2 class="sec">${W.remote ? 'Mundo online' : 'Campanha'}</h2><p style="color:var(--dim)">${!AUTH.enabled && W.remote ? 'O mapa online só existe no servidor com contas (modo local não tem mundo compartilhado).' : W.remote && !net.connected && W !== WMAP ? 'Conectando ao mundo compartilhado…' : 'Carregando o mapa…'}</p>`;
-    if (W === WMAP || !W.remote) bindSubNav(host); return;
+    host.innerHTML = `${head}<p style="color:var(--dim)">${!AUTH.enabled && W.remote ? 'Mapa online indisponível neste servidor.' : W.remote && !net.connected && W !== WMAP ? 'Conectando…' : 'Carregando o mapa…'}</p>`;
+    bindSubNav(host); bindSquadBar(); return;
   }
   const count = f => { let n = 0; for (const sc of W.sec.values()) if (WL.dominant(sc) === f) n++; return n; };
   const title = W === WMAP ? 'Mundo online (só leitura)' : W.remote ? 'Mundo compartilhado' : 'Campanha local';
@@ -1834,13 +1862,13 @@ function renderCampaign(W) {
       <div class="camp-side">
         <div class="camp-box compact"><div class="stat-line"><b>${title}</b><small>T${W.season}·${W.turn}${status}</small></div>
           <div class="fac-count"><span style="color:${OWN.H.color}">● Jogadores <b>${count('H')}</b></span><span style="color:${OWN.I.color}">● Insetos <b>${count('I')}</b></span><span style="color:${OWN.R.color}">● Robôs <b>${count('R')}</b></span></div>
-          <small>Setor liberado com 50%+ · nível mínimo: insetos ${campMinLevel(W, 'I')}+ · robôs ${campMinLevel(W, 'R')}+</small></div>
+          <small>Nível mínimo: insetos ${campMinLevel(W, 'I')}+ · robôs ${campMinLevel(W, 'R')}+</small></div>
         <div class="camp-box compact" id="${W.id}Cell"></div>
         <details class="camp-box compact camp-news"><summary>Notícias</summary><div class="camp-log">${W.log.map(l => `<div>${W.remote ? '' : `<i>T${l.t}</i> `}${l.m}</div>`).join('')}</div>
           ${W.remote || W === WMAP ? '' : '<button class="btn ghost" id="campReset" style="margin-top:8px;padding:5px 12px;font-size:11px">Reiniciar campanha</button>'}</details>
       </div>
     </div>`;
-  if (W === WMAP || !W.remote) bindSubNav(host);
+  bindSubNav(host); bindSquadBar();
   bindMapInput(W);
   if ($('campReset')) $('campReset').onclick = () => { if (confirm('Reiniciar a campanha local? O mapa volta ao começo (créditos e melhorias ficam).')) { save.campaign = null; WLOC.sel = null; ensureLocalCampaign(); renderCampaign(WLOC); } };
   renderCampCell(W); drawCampaign(W); requestSquads(W);
@@ -1854,24 +1882,40 @@ function renderSquadList(W) {
     <i>${q.members}/${q.max}</i><button class="btn" data-sq="${q.id}" ${net.role === 'solo' || net.role === 'client' ? '' : 'disabled'} style="padding:5px 12px;font-size:11px">Entrar</button></div>`).join('');
   el.querySelectorAll('[data-sq]').forEach(b => { b.onclick = () => { b.disabled = true; net.send({ t: 'sq:join', room: +b.dataset.sq, ver: net.version }); }; });
 }
-function libHtml(sc, gain) {                              // liberação do setor: número grande, barra até 50% e quanto falta
-  const need = WL.HUMAN_MIN, pct = Math.min(100, sc.h / need * 100), add = gain ? Math.min(100 - pct, gain / need * 100) : 0;
-  const falta = Math.max(0, need - sc.h);
-  return `<div class="lib"><div class="lib-top"><b>${WL.pct2(sc.h)}</b><span>liberado · meta ${WL.pct2(need)}</span></div>
-    <div class="libbar"><i style="width:${pct}%"></i>${add ? `<em style="left:${pct}%;width:${add}%"></em>` : ''}<u></u></div>
-    <small>${falta <= 0 ? 'Setor liberado.' : `Faltam ${WL.pct2(falta)}${gain ? ` · esta missão: <b>+${WL.pct2(gain)}</b> (~${Math.ceil(falta / gain)} vitória${Math.ceil(falta / gain) > 1 ? 's' : ''})` : ''}`}</small></div>`;
+const TREND_MS = 90000;
+function noteTrend(W, k, a, b) {                          // guarda quem ganhou terreno neste setor há pouco (setas e brilho no mapa)
+  const d = { h: b.h - a.h, i: b.i - a.i, r: b.r - a.r }; if (!d.h && !d.i && !d.r) return;
+  const win = ['h', 'i', 'r'].reduce((x, y) => d[y] > d[x] ? y : x, 'h');
+  (W.trend || (W.trend = new Map())).set(k, { d, win, at: Date.now() });
+}
+const trendOf = (W, k) => { const t = W.trend && W.trend.get(k); return t && Date.now() - t.at < TREND_MS ? t : null; };
+const hasTrend = W => { if (!W.trend) return false; for (const t of W.trend.values()) if (Date.now() - t.at < TREND_MS) return true; return false; };
+const arrow = d => (!d ? '' : d > 0 ? ' <b class="up">▲</b>' : ' <b class="dn">▼</b>');
+function barsHtml(sc, gain, tr) {                         // duas barras: a luta entre insetos e robôs e o avanço humano (azul)
+  const et = sc.i + sc.r, st = WL.stageOf(sc), need = WL.HUMAN_MIN;
+  const fight = sc.i > 0 && sc.r > 0 ? `<div class="bar2"><div class="b2-h"><span>Luta entre as facções</span><small>${WL.pct2(sc.i)} × ${WL.pct2(sc.r)}</small></div>
+    <div class="fightbar"><i style="width:${sc.i / et * 100}%;background:${OWN.I.color}"></i><i style="width:${sc.r / et * 100}%;background:${OWN.R.color}"></i></div>
+    <div class="b2-l"><span style="color:${OWN.I.color}">Insetos${arrow(tr && tr.d.i)}</span><span style="color:${OWN.R.color}">Robôs${arrow(tr && tr.d.r)}</span></div></div>` : '';
+  const hp = sc.h / 100, add = gain ? Math.min(100 - hp, gain / 100) : 0;
+  const msg = st === 'fixo' ? 'Setor fixo dos humanos.'
+    : st === 'dominado' ? `Dominado. Faltam ${WL.pct2(WL.SCALE - sc.h)} para erradicar os inimigos e fixar${gain ? ` · esta missão +${WL.pct2(gain)}` : ''}`
+    : `Faltam ${WL.pct2(need - sc.h)} para dominar${gain ? ` · esta missão <b>+${WL.pct2(gain)}</b> (~${Math.ceil((need - sc.h) / gain)} vitória${Math.ceil((need - sc.h) / gain) > 1 ? 's' : ''})` : ''}`;
+  return `${fight}<div class="bar2"><div class="b2-h"><span>Avanço humano</span><small><span class="stage st-${st}">${WL.STAGE_NAME[st]}</span></small></div>
+    <div class="humanbar"><i style="width:${hp}%"></i>${add ? `<em style="left:${hp}%;width:${add}%"></em>` : ''}<u style="left:50%"></u></div>
+    <div class="b2-l"><b style="color:${OWN.H.color}">${WL.pct2(sc.h)}${arrow(tr && tr.d.h)}</b><span>dominado 50%</span><span>fixo 100%</span></div><small class="b2-m">${msg}</small></div>`;
 }
 function renderCampCell(W) {
   const box = $(W.id + 'Cell'); if (!box) return;
   const o = W.sel;
   if (!o) { box.innerHTML = '<small style="color:var(--dim)">Escolha um quadrado no mapa. Contorno amarelo = pode atacar.</small>'; return; }
   const sc = W.sec.get(ckey(o)), f = WL.dominant(sc), isClient = net.role === 'client';
-  const stack = `<div class="stackbar" title="Humanos ${WL.pct2(sc.h)} · Insetos ${WL.pct2(sc.i)} · Robôs ${WL.pct2(sc.r)}"><i style="width:${sc.h / 100}%;background:${OWN.H.color}"></i><i style="width:${sc.i / 100}%;background:${OWN.I.color}"></i><i style="width:${sc.r / 100}%;background:${OWN.R.color}"></i></div>
+  const stackUnused = `<div class="stackbar" title="Humanos ${WL.pct2(sc.h)} · Insetos ${WL.pct2(sc.i)} · Robôs ${WL.pct2(sc.r)}"><i style="width:${sc.h / 100}%;background:${OWN.H.color}"></i><i style="width:${sc.i / 100}%;background:${OWN.I.color}"></i><i style="width:${sc.r / 100}%;background:${OWN.R.color}"></i></div>
     <div class="stack-leg"><span style="color:${OWN.H.color}">${WL.pct2(sc.h)}</span><span style="color:${OWN.I.color}">${WL.pct2(sc.i)}</span><span style="color:${OWN.R.color}">${WL.pct2(sc.r)}</span></div>`;
-  const head = `<div class="stat-line"><b>Setor ${cellName(o)}</b><small style="color:${OWN[f].color}">${OWN[f].name} · ${BIOME_NAME[o.b]}</small></div>
-    <div id="${W.id}Lib">${libHtml(sc, 0)}</div>${stack}`;
-  if (WL.isHuman(sc)) { box.innerHTML = `${head}<small style="color:var(--dim)">Território dos jogadores. Os inimigos podem tentar retomá-lo.</small>`; return; }
-  if (W.viewOnly) { box.innerHTML = `${head}<small style="color:var(--dim)">${attackable(W, o) ? 'Pode ser atacado no Modo online.' : 'Fora de alcance por enquanto.'}</small><button class="btn" id="mapGoOnline" style="margin-top:6px;padding:6px 14px;font-size:11px">Ir para o Modo online</button>`; $('mapGoOnline').onclick = () => { if (!AUTH.user && AUTH.enabled) showAuth('', 'online'); else showTab('online'); }; return; }
+  const stage = WL.stageOf(sc), pressure = WL.underPressure(GEO.idx, W.sec, ckey(o));
+  const head = `<div class="stat-line"><b>Setor ${cellName(o)}</b><small style="color:${OWN[f].color}">${OWN[f].name} · ${BIOME_NAME[o.b]}${pressure && stage !== 'disputa' ? ' · <b style="color:#ff7a5a">sob ataque</b>' : ''}</small></div>
+    <div id="${W.id}Lib">${barsHtml(sc, 0, trendOf(W, ckey(o)))}</div>`;
+  if (sc.h >= WL.SCALE) { box.innerHTML = `${head}<small style="color:var(--dim)">${WL.underPressure(GEO.idx, W.sec, ckey(o)) ? 'Fixo, mas há inimigos por perto: eles resistem menos ao ataque deste setor.' : 'Protegido: está atrás do território dos humanos.'}</small>`; return; }
+  if (W.viewOnly) { box.innerHTML = `${head}<small style="color:var(--dim)">${attackable(W, o) ? 'Pode ser atacado.' : 'Fora de alcance por enquanto.'}</small><button class="btn" id="mapGoOnline" style="margin-top:6px;padding:6px 14px;font-size:11px">Entrar para atacar</button>`; $('mapGoOnline').onclick = () => { if (!AUTH.user && AUTH.enabled) showAuth('', 'world'); else showTab('world'); }; return; }
   const squadsBox = W.remote ? `<div class="mini-h">Esquadrões aqui</div><div id="${W.id}Squads"></div>` : '';
   if (!attackable(W, o)) { box.innerHTML = `${head}<small style="color:var(--dim)">Fora de alcance. Domine um setor vizinho antes.</small>${squadsBox}`; renderSquadList(W); return; }
   const ef = enemyOfCell(W, o), fac = OWN[ef].fac, m = cellMission(W, o), min = sectorMin(W, o), L = Math.min(LEVEL_MAX, Math.max(min, save.campLevel || min)), mix = WL.mixOf(sc);
@@ -1881,10 +1925,10 @@ function renderCampCell(W) {
     <div class="lvl-row"><span>Nível <b id="${W.id}Lv">${L}</b> <small id="${W.id}Tag">${levelTag(L)} · mín. ${min}</small></span>
       <div class="lvl-ctl"><button class="btn" id="${W.id}Dn" ${isClient ? 'disabled' : ''}>−</button><input type="range" id="${W.id}Range" min="${min}" max="${LEVEL_MAX}" value="${L}" ${isClient ? 'disabled' : ''}><button class="btn" id="${W.id}Up" ${isClient ? 'disabled' : ''}>+</button></div></div>
     ${W.remote ? `<div class="pol-row"><small>Esquadrão</small><select id="${W.id}Policy" class="field"><option value="open">Aberto</option><option value="friends">Só amigos</option><option value="closed">Fechado</option></select></div>` : ''}
-    <button class="btn primary" id="${W.id}Go" style="width:100%" ${!isClient && !missionBusy() && !offline && !blockedLocal ? '' : 'disabled'}>${isClient ? 'Aguardando o host' : offline ? (AUTH.user ? 'Reconectando…' : 'Entre para jogar online') : blockedLocal ? 'Saia da sala online primeiro' : 'Atacar este setor'}</button>
+    <button class="btn primary" id="${W.id}Go" style="width:100%" ${!isClient && !missionBusy() && !offline && !blockedLocal ? '' : 'disabled'}>${isClient ? 'Aguardando o host' : offline ? (AUTH.user ? 'Reconectando…' : 'Entre para jogar online') : blockedLocal ? 'Saia da sala online primeiro' : stage === 'disputa' ? 'Atacar este setor' : pressure ? 'Defender e erradicar' : 'Erradicar inimigos'}</button>
     <div id="${W.id}Msg" class="onlinemsg"></div>${squadsBox}`;
   const rng = $(W.id + 'Range');
-  const prog = v => { const g = WL.missionGain(m.id, v); $(W.id + 'Lib').innerHTML = libHtml(sc, g); };
+  const prog = v => { const g = WL.missionGain(m.id, v); $(W.id + 'Lib').innerHTML = barsHtml(sc, g, trendOf(W, ckey(o))); };
   const set = v => { v = Math.min(LEVEL_MAX, Math.max(min, v)); save.campLevel = v; persist(); rng.value = v; $(W.id + 'Lv').textContent = v; $(W.id + 'Tag').textContent = `${levelTag(v)} · mín. ${min}`; prog(v); };
   prog(L);
   rng.oninput = e => set(+e.target.value); $(W.id + 'Dn').onclick = () => set(+rng.value - 1); $(W.id + 'Up').onclick = () => set(+rng.value + 1);
@@ -1919,19 +1963,19 @@ async function fetchPublicWorld() {                    // sem login: lê o mapa 
   if (!AUTH.enabled || net.connected) return;
   try { const r = await fetch('/api/world', { cache: 'no-store' }); if (r.ok) applyServerWorld(await r.json(), true); } catch { /* sem rede */ }
 }
-setInterval(() => { if ($('pane-map') && $('pane-map').classList.contains('on')) fetchPublicWorld(); }, 15000);
+setInterval(() => { if (worldPaneOn()) fetchPublicWorld(); }, 15000);
 let rotEpoch = -1;
 setInterval(() => {                                      // contagem para a próxima troca de missão; ao virar o ciclo, redesenha o painel
   for (const W of [WLOC, WNET]) {
     if (!worldReady(W)) continue;
     const ep = WL.epochOf(worldNow(W));
     if (W === WLOC && rotEpoch !== -1 && ep !== rotEpoch && $('pane-camp') && $('pane-camp').classList.contains('on')) renderCampCell(W);
-    if (W === WNET && W.epoch !== undefined && ep !== W.epoch && onlineTabIsMap() && !W.pending) renderCampCell(W);
+    if (W === WNET && W.epoch !== undefined && ep !== W.epoch && worldPaneOn() && worldW() === WNET && !W.pending) renderCampCell(W);
     if (W === WLOC) rotEpoch = ep; else W.epoch = ep;
     const el = $(W.id + 'Rot'); if (el) el.textContent = `· muda em ${fmtMin(WL.nextRotation(worldNow(W)) - worldNow(W))}`;
   }
 }, 1000);
-setInterval(() => { if (onlineTabIsMap() && WNET.sel) requestSquads(WNET); }, 5000);
+setInterval(() => { if (worldPaneOn() && AUTH.user && WNET.sel) requestSquads(WNET); }, 5000);
 
 // ───────────── avisos na tela ─────────────
 function toast(text, o = {}) {
@@ -2127,14 +2171,14 @@ function bindAuthUi() {
   };
   $('authForm').onsubmit = go;
   $('authClose').onclick = () => { $('auth').classList.remove('on'); authThen = null; };
-  $('loginBtn').onclick = () => showAuth('', 'online');
+  $('loginBtn').onclick = () => showAuth('', worldPaneOn() ? 'world' : 'online');
   $('logout').onclick = async () => { try { await api('/api/logout', {}); } catch { /* ok */ } dropSession(); showTab('home'); };
   net.onKicked = () => { dropSession('Sua conta foi aberta em outro lugar.'); showAuth('Sua conta foi aberta em outro lugar.'); };
   let chk = 0;
   net.onConn = ok => {                                        // conexão caiu: confere se a sessão ainda vale (pode ter expirado)
     if (!AUTH.user) return;
     if (ok) net.send({ t: 'f:list' });
-    if (onlineTabIsMap()) renderCampaign(WNET);
+    if (worldPaneOn()) renderWorldPane();
     if (!ok && Date.now() - chk > 10000) { chk = Date.now(); fetch('/api/me', { cache: 'no-store', credentials: 'same-origin' }).then(r => { if (r.status === 401) { dropSession('Sua sessão expirou. Entre de novo.'); showAuth('Sua sessão expirou. Entre de novo.', 'online'); } }).catch(() => {}); }
   };
   setMode('login');
@@ -2202,8 +2246,8 @@ function presentResults(r) {
 let selMission = 'operation', activeTab = 'home';
 let selFaction = save.faction === 'bots' ? 'bots' : 'bugs';
 curFaction = selFaction;
-const TABS = [['ops', 'NOVO JOGO'], ['online', 'MODO ONLINE'], ['settings', 'CONFIGURAÇÕES'], ['keys', 'CONTROLES']];
-const SUB_OF = { camp: 'ops', map: 'ops', arsenal: 'ops', upg: 'ops' };           // arsenal e melhorias moram dentro de NOVO JOGO
+const TABS = [['ops', 'MAPA'], ['online', 'COMUNICAÇÕES'], ['settings', 'CONFIGURAÇÕES'], ['keys', 'CONTROLES']];
+const SUB_OF = { camp: 'ops', world: 'ops', arsenal: 'ops', upg: 'ops' };         // arsenal e melhorias moram dentro de MAPA
 const FACTIONS = {
   bugs: { name: 'INSETOS', kick: 'O ENXAME', desc: 'Rastejadores, cuspidores, brutos, bombardeiros, investidores e a Rainha da colmeia. Veloz, numeroso e barulhento.' },
   bots: { name: 'ROBÔS', kick: 'EXÉRCITO MECHA', desc: 'Soldados-lâmina com espada, atiradores com rifle, pesados, kamikazes, lanceiros e o Comandante Mecha. Metódico e armado.' },
@@ -2234,7 +2278,7 @@ function levelPreview(m, L) {
           <div><small>RECOMPENSA</small><b>${pct(levelScale(L).reward)}</b></div>`;
 }
 const levelTag = v => v === 1 ? 'RELAX' : v >= 15 ? 'EXTREMO' : v >= 8 ? 'DIFÍCIL' : 'NORMAL';
-const subNav = on => `<div class="subnav">${[['camp', 'CAMPANHA'], ['map', 'MAPA'], ['ops', 'PARTIDA LIVRE'], ['arsenal', 'ARSENAL'], ['upg', 'MELHORIAS']].map(([id, l]) => `<button data-sub="${id}" class="${id === on ? 'on' : ''}">${l}</button>`).join('')}</div>`;
+const subNav = on => `<div class="subnav">${[['camp', 'CAMPANHA'], ['world', 'MUNDO ONLINE'], ['ops', 'PARTIDA LIVRE'], ['arsenal', 'ARSENAL'], ['upg', 'MELHORIAS']].map(([id, l]) => `<button data-sub="${id}" class="${id === on ? 'on' : ''}">${l}</button>`).join('')}</div>`;
 function bindSubNav(pane) { pane.querySelectorAll('[data-sub]').forEach(b => { b.onclick = () => showTab(b.dataset.sub); }); }
 function factionRow() {
   const canPick = net.role !== 'client';
@@ -2245,7 +2289,7 @@ function factionRow() {
 }
 function bindFactionRow(pane) { pane.querySelectorAll('[data-fac]').forEach(b => { b.onclick = () => setFaction(b.dataset.fac); }); }
 function renderHome() {
-  const hero = [['camp', 'NOVO JOGO', 'Campanha no mapa-múndi ou partida livre'], ['online', 'MODO ONLINE', 'Crie uma sala ou entre com o código do host'],
+  const hero = [['camp', 'MAPA', 'Campanha, mundo online e partida livre'], ['online', 'COMUNICAÇÕES', 'Amigos, conversas e esquadrões'],
     ['settings', 'CONFIGURAÇÕES', 'Áudio, mira, gráficos e tipo de controle'], ['keys', 'CONTROLES', 'Teclas, botões de toque e regras de XP']];
   $('pane-home').innerHTML = `<div class="home">
     <div class="home-menu">${hero.map(([id, t, d], i) => `<button class="home-btn" data-go="${id}"><i>${String(i + 1).padStart(2, '0')}</i><b>${t}</b><span>${d}</span></button>`).join('')}</div>
@@ -2396,20 +2440,20 @@ function renderKeys() {
 function renderAll() {
   $('credits').textContent = save.credits;
   if (state === 'menu' || state === 'ended') curFaction = selFaction;
-  renderHome(); renderCampaign(WLOC); renderOps(); renderOnline(); renderArsenal(); renderUpgrades(); renderSettings(); renderKeys();
+  renderHome(); renderCampaign(WLOC); renderWorldPane(); renderOps(); renderOnline(); renderArsenal(); renderUpgrades(); renderSettings(); renderKeys();
 }
 function showTab(id) {
   activeTab = id;
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === (SUB_OF[id] || id)));
   $('menu').classList.toggle('is-home', id === 'home');
   if (id === 'camp') renderCampaign(WLOC);
-  if (id === 'map') { renderCampaign(WMAP); fetchPublicWorld(); }
+  if (id === 'world') { renderWorldPane(); fetchPublicWorld(); }
   if (id === 'online') renderOnline(true);
   document.querySelectorAll('.pane').forEach(p => p.classList.toggle('on', p.id === 'pane-' + id));
 }
 function buildMenu() {
   $('tabs').innerHTML = TABS.map(([id, label]) => `<button class="tab" data-tab="${id}">${label}</button>`).join('');
-  $('view').innerHTML = ['home', ...TABS.map(t => t[0]), 'camp', 'map', 'arsenal', 'upg'].map(id => `<section class="pane" id="pane-${id}"></section>`).join('');
+  $('view').innerHTML = ['home', ...TABS.map(t => t[0]), 'camp', 'world', 'arsenal', 'upg'].map(id => `<section class="pane" id="pane-${id}"></section>`).join('');
   $('logoHome').onclick = () => showTab('home');
   document.querySelectorAll('.tab').forEach(b => b.onclick = () => showTab(b.dataset.tab === 'ops' ? 'camp' : b.dataset.tab));
   $('resume').onclick = () => captureInput();
@@ -3531,8 +3575,11 @@ function updateParty(dt) {
     return `<div class="pm ${o.st.dd ? 'dead' : ''}"><b>${o.name}</b><div class="meter"><i style="width:${pct}%"></i></div></div>`;
   }).join('');
 }
-let onlTab = 'map';
-const onlineTabIsMap = () => !!$('onlMap') && $('pane-online').classList.contains('on');
+let onlTab = 'friends';
+function bindSquadBar() {
+  if ($('leaveBtn')) $('leaveBtn').onclick = () => { net.leave(); clearOthers(); $('sub').textContent = 'Pronto para o deploy.'; renderAll(); showTab(activeTab); };
+  if ($('sqPolicy')) { $('sqPolicy').value = squadPolicy; $('sqPolicy').onchange = e => { squadPolicy = e.target.value; net.send({ t: 'sq:policy', policy: squadPolicy }); }; }
+}
 function squadBar() {
   if (net.role === 'solo') return '';
   const members = net.roster.map(p => `<span class="sq-m">${p.host ? '★ ' : ''}${esc(p.name)}${p.id === net.id ? ' (você)' : ''}</span>`).join('');
@@ -3544,20 +3591,18 @@ function renderOnline(force) {
   const pane = $('pane-online'); if (!pane) return;
   if (!force && pane.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') return;
   if (AUTH.enabled && !AUTH.user) {
-    pane.innerHTML = `<h2 class="sec">Modo online</h2><div class="camp-box" style="max-width:560px"><h4>Entre para jogar online</h4>
-      <p>No modo online todos os jogadores disputam o <b>mesmo mapa</b>: cada setor mostra a porcentagem de domínio e muda ao vivo. Você pode jogar sozinho ou entrar no esquadrão de outras pessoas,
-      adicionar amigos e convidá-los. Só precisa de usuário e senha.</p><button class="btn primary" id="onlLogin">Entrar ou criar conta</button></div>`;
+    pane.innerHTML = `<h2 class="sec">Comunicações</h2><div class="camp-box" style="max-width:560px"><h4>Entre para usar as comunicações</h4>
+      <p>Adicione amigos, converse e monte esquadrões. Só precisa de usuário e senha.</p><button class="btn primary" id="onlLogin">Entrar ou criar conta</button></div>`;
     $('onlLogin').onclick = () => showAuth('', 'online'); return;
   }
   const curTab = AUTH.enabled ? onlTab : 'code';
-  const tabs = AUTH.enabled ? [['map', 'MAPA ONLINE'], ['friends', 'AMIZADES' + (FR.incoming.length ? ` (${FR.incoming.length})` : '') + (Object.values(CHAT.unread || {}).reduce((x, y) => x + y, 0) ? ' ●' : '')], ['code', 'SALA POR CÓDIGO']] : [['code', 'SALA POR CÓDIGO']];
+  const unread = Object.values(CHAT.unread || {}).reduce((x, y) => x + y, 0);
+  const tabs = AUTH.enabled ? [['friends', 'AMIZADES' + (FR.incoming.length ? ` (${FR.incoming.length})` : '') + (unread ? ' ●' : '')], ['code', 'SALA POR CÓDIGO']] : [['code', 'SALA POR CÓDIGO']];
   pane.innerHTML = `<div class="subnav">${tabs.map(([id, l]) => `<button data-ot="${id}" class="${id === curTab ? 'on' : ''}">${l}</button>`).join('')}</div>${squadBar()}<div id="onlBody"></div><div id="onlineMsg" class="onlinemsg"></div>`;
   pane.querySelectorAll('[data-ot]').forEach(b => { b.onclick = () => { onlTab = b.dataset.ot; renderOnline(true); }; });
-  if ($('leaveBtn')) $('leaveBtn').onclick = () => { net.leave(); clearOthers(); $('sub').textContent = 'Pronto para o deploy.'; renderAll(); showTab('online'); };
-  if ($('sqPolicy')) { $('sqPolicy').value = squadPolicy; $('sqPolicy').onchange = e => { squadPolicy = e.target.value; net.send({ t: 'sq:policy', policy: squadPolicy }); }; }
+  bindSquadBar();
   const body = $('onlBody');
-  if (curTab === 'map') { body.innerHTML = '<div id="onlMap"></div>'; renderCampaign(WNET); }
-  else if (curTab === 'friends') renderFriends(body);
+  if (curTab === 'friends') renderFriends(body);
   else renderCodeRooms(body);
 }
 function renderCodeRooms(el) {
