@@ -23,15 +23,15 @@ const ENEMY_TYPES = {
 };
 
 const MISSIONS = [
-  { id: 'operation', title: 'Operação Gerador', tag: 'CAMPANHA', danger: 4, par: 16, biome: 'desert',
+  { id: 'operation', base: { hp: 1.0, dmg: 1.0, speed: 1.0, count: 1.0, elite: 0 }, mix: { spit: 0.18, bomb: 0.06, chrg: 0.04 }, title: 'Operação Gerador', tag: 'CAMPANHA', danger: 4, par: 16, biome: 'desert',
     desc: 'Seu esquadrão pousa longe do objetivo. Atravesse o território dominado pelo enxame, ative e defenda o gerador contra 8 ondas, siga até a zona de extração, aguente 1:30 e embarque na nave pela rampa traseira.',
     phases: ['Deslocamento', 'Defender o gerador · 8 ondas', 'Zona de extração · 1:30', 'Embarque'] },
-  { id: 'purge', title: 'Limpeza do setor', tag: 'RÁPIDA', danger: 2, par: 6, biome: 'desert', desc: 'Seis ondas seguindo a sequência de Fibonacci: 5, 8, 13, 21, 34 e 55 inimigos. Limpe uma onda para a próxima chegar.', phases: ['Ondas: 5 · 8 · 13 · 21 · 34 · 55'] },
-  { id: 'samples', title: 'Coleta de amostras', tag: 'RÁPIDA', danger: 2, par: 5, biome: 'ice', desc: 'Recolha 6 cápsulas pelo gelo. Cada uma atrai uma onda do enxame.', phases: ['Coletar 6 cápsulas'] },
-  { id: 'beacon', title: 'Faróis de comunicação', tag: 'RÁPIDA', danger: 2, par: 5, biome: 'toxic', desc: 'Ative 3 faróis ficando dentro do círculo enquanto o enxame ataca.', phases: ['Ativar 3 faróis'] },
-  { id: 'defend', title: 'Defesa do gerador', tag: 'RÁPIDA', danger: 3, par: 4, biome: 'ice', desc: 'Proteja o gerador por 2 minutos. Bombardeiros e investidores miram nele.', phases: ['Resistir 2 minutos'] },
-  { id: 'extract', title: 'Extração sob fogo', tag: 'RÁPIDA', danger: 3, par: 5, biome: 'volcanic', desc: 'Derrube 2 brutamontes e alcance a zona de extração.', phases: ['2 brutamontes', 'Extração'] },
-  { id: 'queen', title: 'Rainha da colmeia', tag: 'CHEFE', danger: 5, par: 6, biome: 'volcanic', desc: 'Chefe: derrube a Rainha enquanto ela invoca o enxame.', phases: ['Derrotar a Rainha'] },
+  { id: 'purge', base: { hp: 1.25, dmg: 1.15, speed: 1.03, count: 1.0, elite: 0.02 }, mix: { spit: 0.22, bomb: 0.08, chrg: 0.06 }, title: 'Limpeza do setor', tag: 'RÁPIDA', danger: 2, par: 6, biome: 'desert', desc: 'Seis ondas seguindo a sequência de Fibonacci: 5, 8, 13, 21, 34 e 55 inimigos. Limpe uma onda para a próxima chegar.', phases: ['Ondas: 5 · 8 · 13 · 21 · 34 · 55'] },
+  { id: 'samples', base: { hp: 1.5, dmg: 1.3, speed: 1.05, count: 1.1, elite: 0.04 }, mix: { spit: 0.24, bomb: 0.10, chrg: 0.08 }, title: 'Coleta de amostras', tag: 'RÁPIDA', danger: 2, par: 5, biome: 'ice', desc: 'Recolha 6 cápsulas pelo gelo. Cada uma atrai uma onda do enxame.', phases: ['Coletar 6 cápsulas'] },
+  { id: 'beacon', base: { hp: 1.8, dmg: 1.45, speed: 1.07, count: 1.2, elite: 0.06 }, mix: { spit: 0.26, bomb: 0.12, chrg: 0.10 }, title: 'Faróis de comunicação', tag: 'RÁPIDA', danger: 2, par: 5, biome: 'toxic', desc: 'Ative 3 faróis ficando dentro do círculo enquanto o enxame ataca.', phases: ['Ativar 3 faróis'] },
+  { id: 'defend', base: { hp: 2.1, dmg: 1.6, speed: 1.09, count: 1.3, elite: 0.08 }, mix: { spit: 0.28, bomb: 0.14, chrg: 0.12 }, title: 'Defesa do gerador', tag: 'RÁPIDA', danger: 3, par: 4, biome: 'ice', desc: 'Proteja o gerador por 2 minutos. Bombardeiros e investidores miram nele.', phases: ['Resistir 2 minutos'] },
+  { id: 'extract', base: { hp: 2.5, dmg: 1.8, speed: 1.11, count: 1.4, elite: 0.10 }, mix: { spit: 0.30, bomb: 0.16, chrg: 0.14 }, title: 'Extração sob fogo', tag: 'RÁPIDA', danger: 3, par: 5, biome: 'volcanic', desc: 'Derrube 2 brutamontes e alcance a zona de extração.', phases: ['2 brutamontes', 'Extração'] },
+  { id: 'queen', base: { hp: 3.0, dmg: 2.0, speed: 1.12, count: 1.5, elite: 0.12 }, mix: { spit: 0.32, bomb: 0.18, chrg: 0.16 }, title: 'Rainha da colmeia', tag: 'CHEFE', danger: 5, par: 6, biome: 'volcanic', desc: 'Chefe: derrube a Rainha enquanto ela invoca o enxame.', phases: ['Derrotar a Rainha'] },
 ];
 const BIOME_CSS = {
   desert: 'linear-gradient(135deg,#7a5a38,#c9a27a 55%,#3a2a1c)', ice: 'linear-gradient(135deg,#34506c,#aec9e2 55%,#25364a)',
@@ -58,6 +58,12 @@ function persist() { try { localStorage.setItem('multipunk_save', JSON.stringify
 const lvl = id => (save.upg && save.upg[id]) || 0;
 const maxHp = () => PLAYER.maxHp + 5 * lvl('hp');
 const reserveCap = w => Math.round(w.reserveMax * (1 + 0.05 * lvl('ammo')));
+// Cada fase tem a sua própria base (vida, ataque, velocidade, quantidade, elites e mistura de inimigos).
+// Dentro da fase, a força de cada onda sobe pela sequência de Fibonacci (1, 1, 2, 3, 5, 8, 13, 21…).
+const FIB = [0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89];
+const fib = n => FIB[Math.min(Math.max(0, n), FIB.length - 1)];
+const fibHp = n => 1 + 0.04 * fib(n), fibDm = n => 1 + 0.025 * fib(n);
+let curMix = { spit: 0.22, bomb: 0.10, chrg: 0.07 };
 const XP_VALUES = { crawler: 6, spitter: 10, bomber: 12, charger: 26, brute: 60, queen: 400 };
 
 // ───────────────────────── Cena ─────────────────────────
@@ -490,7 +496,7 @@ function spawnEnemy(type, atPos, opts = {}) {
   }
   scene.add(mesh);
   const e = {
-    id: uid(), by: -1, type, t, mesh, hp, maxHp: hp, atkCd: rand(0, 0.5), shootCd: rand(1, 2.5), phase: Math.random() * 6,
+    id: uid(), by: -1, dm: opts.dmMul || 1, type, t, mesh, hp, maxHp: hp, atkCd: rand(0, 0.5), shootCd: rand(1, 2.5), phase: Math.random() * 6,
     st: 'walk', stT: rand(1.5, 3), volleyCd: 3, summonCd: 10, spd: mods.speed, elite,
     pl: opts.pl || null, wave: opts.wave || 0, alert: !!opts.alert, slot: opts.slot || 0,
   };
@@ -499,12 +505,7 @@ function spawnEnemy(type, atPos, opts = {}) {
 }
 
 function pickEnemyType() {
-  const t = elapsed, r = Math.random();
-  const pB = t > 20 ? 0.09 : 0, pC = t > 45 ? 0.07 : 0, pS = 0.22;
-  if (r < pB) return 'bomber';
-  if (r < pB + pC) return 'charger';
-  if (r < pB + pC + pS) return 'spitter';
-  return 'crawler';
+  return rollType(typeMix(1 + Math.floor(elapsed / 30)), Math.random());
 }
 
 function damagePlayer(amount) {
@@ -637,7 +638,7 @@ function killEnemy(e) {
   kills++;
   killsBy[e.by] = (killsBy[e.by] || 0) + 1;
   $('kills').textContent = 'Abates: ' + kills;
-  if (e.type === 'bomber') explode(e.mesh.position, 5.5, 35, 70);
+  if (e.type === 'bomber') explode(e.mesh.position, 5.5, 35 * e.dm * mods.edmg, 70);
   else maybeDrop(e.mesh.position);
   addXp((XP_VALUES[e.type] || 5) * (e.elite ? 2 : 1));
   mission.onKill?.(e);
@@ -683,7 +684,7 @@ function formationOffset(i, heading) {
 function makePlatoon(center, types, opts = {}) {
   const pl = { members: [], anchor: center.clone().setY(0), wps: opts.wps || [], wi: 0, state: opts.alert ? 'alert' : 'patrol', speed: 2.3, heading: rand(0, Math.PI * 2), msgT: 0 };
   types.forEach((t, i) => {
-    const e = spawnEnemy(t, pl.anchor.clone().add(formationOffset(i, pl.heading)), { pl, wave: opts.wave, alert: !!opts.alert, slot: i, hpMul: opts.hpMul });
+    const e = spawnEnemy(t, pl.anchor.clone().add(formationOffset(i, pl.heading)), { pl, wave: opts.wave, alert: !!opts.alert, slot: i, hpMul: opts.hpMul, dmMul: opts.dmMul });
     pl.members.push(e);
   });
   platoons.push(pl);
@@ -945,27 +946,29 @@ function buildOperationPlatoons(L) {
     makePlatoon(c, ['crawler', 'crawler', 'spitter', 'crawler', 'spitter'], { wps });
   }
 }
+function typeMix(n) {                      // probabilidades da fase, crescendo com Fibonacci a cada onda
+  const f = 1 + 0.04 * fib(n);
+  return { bomb: n >= 2 ? curMix.bomb * f : 0, chrg: n >= 4 ? curMix.chrg * f : 0, spit: curMix.spit };
+}
+function rollType(m, r) { return r < m.bomb ? 'bomber' : r < m.bomb + m.chrg ? 'charger' : r < m.bomb + m.chrg + m.spit ? 'spitter' : 'crawler'; }
 function waveTypes(n, count) {
-  const arr = [];
-  for (let i = 0; i < count; i++) {
-    const r = Math.random();
-    arr.push(n >= 2 && r < 0.10 ? 'bomber' : n >= 4 && r < 0.18 ? 'charger' : r < 0.36 ? 'spitter' : 'crawler');
-  }
+  const arr = [], m = typeMix(n);
+  for (let i = 0; i < count; i++) arr.push(rollType(m, Math.random()));
   return arr;
 }
 function spawnWave(op, n) {
   op.wave = n; op.waveActive = true;
-  const total = Math.round((10 + 3 * n) * mods.count), hpMul = 1 + 0.08 * (n - 1);
+  const total = Math.round((10 + 3 * n) * mods.count), hpMul = fibHp(n), dmMul = fibDm(n);
   const base = rand(0, Math.PI * 2);
   for (let g = 0; g < 3; g++) {
     const ang = base + g * 2.1 + rand(-0.3, 0.3);
     const c = clampArena(new THREE.Vector3(generator.x + Math.cos(ang) * rand(58, 70), 0, generator.z + Math.sin(ang) * rand(58, 70)));
-    makePlatoon(c, waveTypes(n, Math.round(total / 3)), { alert: true, wave: n, hpMul });
+    makePlatoon(c, waveTypes(n, Math.round(total / 3)), { alert: true, wave: n, hpMul, dmMul });
   }
   const brutes = n === 8 ? 2 : (n === 5 || n === 7) ? 1 : 0;
   for (let k = 0; k < brutes; k++) {
     const ang = rand(0, Math.PI * 2);
-    spawnEnemy('brute', clampArena(new THREE.Vector3(generator.x + Math.cos(ang) * 64, 0, generator.z + Math.sin(ang) * 64)), { wave: n, alert: true, hpMul });
+    spawnEnemy('brute', clampArena(new THREE.Vector3(generator.x + Math.cos(ang) * 64, 0, generator.z + Math.sin(ang) * 64)), { wave: n, alert: true, hpMul, dmMul });
   }
   op.waveSize = Math.max(1, enemies.filter(e => e.wave === n).length);
   sayAll(`ONDA ${n} / ${op.waves}`, 3); beep(200, 0.4, 0.1);
@@ -977,7 +980,7 @@ function spawnReinforcement() {
     const ang = a + g * 3.1;
     const c = clampArena(new THREE.Vector3(E.x + Math.cos(ang) * 68, 0, E.z + Math.sin(ang) * 68));
     const n = Math.round((7 + level) * mods.count * 0.5);
-    makePlatoon(c, waveTypes(8, n), { alert: true, wave: 99, hpMul: 1.5 });
+    makePlatoon(c, waveTypes(8, n), { alert: true, wave: 99, hpMul: fibHp(8), dmMul: fibDm(8) });
   }
   sayAll('Reforços inimigos!', 1.8);
 }
@@ -1151,12 +1154,12 @@ function buildMission(id) {
         m.text = `Onda ${w.wave + 1}/${total} em ${Math.max(0, Math.ceil(w.countdown))} s`;
         if (w.countdown <= 0) {
           w.wave++; w.active = true;
-          const count = m.fib[w.wave - 1], hpMul = 1 + 0.06 * (w.wave - 1);      // contagem exata de Fibonacci
+          const count = m.fib[w.wave - 1], hpMul = fibHp(w.wave), dmMul = fibDm(w.wave);      // contagem exata de Fibonacci
           const groups = count >= 13 ? 3 : count >= 8 ? 2 : 1, base = rand(0, Math.PI * 2);
           for (let g = 0; g < groups; g++) {
             const ang = base + g * (Math.PI * 2 / groups), n = Math.floor(count / groups) + (g < count % groups ? 1 : 0);
             const c = clampArena(teamCenter().add(new THREE.Vector3(Math.cos(ang) * rand(44, 58), 0, Math.sin(ang) * rand(44, 58))));
-            makePlatoon(c, waveTypes(w.wave + 1, n), { alert: true, wave: w.wave, hpMul });
+            makePlatoon(c, waveTypes(w.wave + 1, n), { alert: true, wave: w.wave, hpMul, dmMul });
           }
           // o sorteio "mais inimigos" não muda a sequência: vira um reforço que chega depois, na mesma onda
           w.extra = mods.count > 1.01 ? Math.round(count * (mods.count - 1)) : 0; w.extraT = 9;
@@ -1168,7 +1171,7 @@ function buildMission(id) {
           w.extraT -= dt;
           if (w.extraT <= 0) {
             const a = rand(0, Math.PI * 2), c = clampArena(teamCenter().add(new THREE.Vector3(Math.cos(a) * 50, 0, Math.sin(a) * 50)));
-            makePlatoon(c, waveTypes(w.wave + 1, w.extra), { alert: true, wave: w.wave, hpMul: 1 + 0.06 * (w.wave - 1) });
+            makePlatoon(c, waveTypes(w.wave + 1, w.extra), { alert: true, wave: w.wave, hpMul: fibHp(w.wave), dmMul: fibDm(w.wave) });
             w.size += w.extra; w.extra = 0; sayAll('Reforços do enxame!', 2);
           }
         }
@@ -1359,7 +1362,9 @@ function startMission(id) {
   elapsed = 0;
   spawnTimer = 1;
   shake = 0;
-  mods = { hp: 1 + 0.15 * (tier - 1), count: 1 + 0.08 * (tier - 1), speed: 1 + 0.02 * (tier - 1), edmg: 1 + 0.1 * (tier - 1), elite: 0.02 * (tier - 1) };
+  const B = def && def.base ? def.base : { hp: 1, dmg: 1, speed: 1, count: 1, elite: 0 };
+  curMix = def && def.mix ? def.mix : { spit: 0.22, bomb: 0.1, chrg: 0.07 };
+  mods = { hp: B.hp, count: B.count, speed: B.speed, edmg: B.dmg, elite: B.elite };
   xp = 0; level = 1; xpNeed = 60; pendingLoot = 0; buffs = { dmg: 0, shield: 0 };
   stats = { shots: 0, hits: 0, supplies: 0, orbitals: 0, deaths: 0 };
   resetLocalPlayer();
@@ -1515,6 +1520,8 @@ function renderOps() {
             <div><small>MELHOR PONTUAÇÃO</small><b>${best != null ? best : '—'}</b></div>
             <div><small>RANK</small><b>${best != null ? rankOf(best) : '—'}</b></div>
             <div><small>TEMPO-META</small><b>${Math.round(m.par * 0.75)} min</b></div>
+            <div><small>VIDA BASE</small><b>×${m.base.hp.toFixed(2)}</b></div>
+            <div><small>ATAQUE BASE</small><b>×${m.base.dmg.toFixed(2)}</b></div>
           </div>
           <div class="op-foot"><button class="btn primary" id="deploy" ${net.role === 'client' || missionBusy() ? 'disabled' : ''}>${net.role === 'client' ? 'Aguardando o host' : 'Iniciar operação'}</button>
             <span style="color:var(--dim);font-size:12px">Pontos pela velocidade, abates, precisão, mortes, suprimentos e orbitais.</span></div>
@@ -1906,7 +1913,7 @@ function updateEnemies(dt) {
     const to = tg.pos.clone().sub(m.position).setY(0);
     const dist = Math.max(0, to.length() - tg.rad);
     const dir = to.normalize();
-    const hurt = d => tg.gen ? damageGenerator(d * mods.edmg) : (tg.pid >= 0 ? hurtPlayer(tg.pid, d * mods.edmg) : 0);
+    const hurt = d => tg.gen ? damageGenerator(d * mods.edmg * e.dm) : (tg.pid >= 0 ? hurtPlayer(tg.pid, d * mods.edmg * e.dm) : 0);
     const walkTo = sp => { m.position.addScaledVector(dir, sp * dt * e.spd); };
     e.phase += dt * (e.type === 'crawler' || e.type === 'bomber' ? 14 : 7);
     m.position.y = Math.abs(Math.sin(e.phase)) * 0.12;
@@ -1920,7 +1927,7 @@ function updateEnemies(dt) {
       if (e.shootCd <= 0 && dist < 38) {
         e.shootCd = rand(1.8, 3);
         const from = m.position.clone().setY(1.5);
-        spitAt(from, tg.pos.clone().add(new THREE.Vector3(0, 1.1, 0)).sub(from), 18, e.t.dmg, false);
+        spitAt(from, tg.pos.clone().add(new THREE.Vector3(0, 1.1, 0)).sub(from), 18, e.t.dmg * e.dm, false);
         beep(240, 0.12, 0.05);
       }
     } else if (e.type === 'bomber') {
@@ -1957,7 +1964,7 @@ function updateEnemies(dt) {
         for (let i = -2; i <= 2; i++) {
           const v = base.clone(); const c = Math.cos(i * 0.16), sn = Math.sin(i * 0.16);
           const x = v.x * c - v.z * sn, z = v.x * sn + v.z * c; v.x = x; v.z = z;
-          spitAt(from, v, 15, 14, true);
+          spitAt(from, v, 15, 14 * e.dm, true);
         }
         beep(180, 0.25, 0.08);
       }

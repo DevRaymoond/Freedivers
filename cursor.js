@@ -57,12 +57,12 @@
     if (!enabled || !started) { ctx.clearRect(0, 0, innerWidth, innerHeight); return; }
 
     // anel persegue o mouse
-    const k = lerpK(0.18, dt);
+    const k = lerpK(0.42, dt);               // o anel acompanha o ponto de perto
     ring.x += (mouse.x - ring.x) * k; ring.y += (mouse.y - ring.y) * k;
     const dx = mouse.x - ring.x, dy = mouse.y - ring.y, dist = Math.hypot(dx, dy);
-    const h = Math.min(dist / 150, 0.42);
+    const h = Math.min(dist / 110, 0.38);
     if (dist > 0.6) rot = Math.atan2(dy, dx);
-    const k2 = lerpK(0.2, dt);
+    const k2 = lerpK(0.35, dt);
     sx += (1 + h - sx) * k2;                 // alonga na direção do movimento
     sy += (1 - h * 0.72 - sy) * k2;          // afina no eixo perpendicular
 
