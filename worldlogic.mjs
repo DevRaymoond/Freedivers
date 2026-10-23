@@ -76,13 +76,14 @@ export const minLevelSector = (sec, init, s, max = 20) => { const m = mixOf(s); 
 export const MISSION_POINTS = { operation: 1500, purge: 600, samples: 500, beacon: 500, defend: 700, extract: 800, queen: 2000 };
 export const missionGain = (id, level) => (MISSION_POINTS[id] || 500) + Math.max(1, Math.min(20, Math.round(level) || 1));
 const move = (s, from, to, n) => { n = Math.min(n, s[from]); s[from] -= n; s[to] += n; return n; };
-// vitória: os humanos tomam o progresso do defensor (e, se faltar, do outro lado). Derrota: o defensor recupera 40% do que a missão valeria.
+// vitória: os humanos tomam o progresso do defensor (e, se faltar, do outro lado). Derrota: o defensor recupera 25% do que a missão valeria.
 export function applyWin(s, missionId, level) {
   const def = enemyOf(s), other = def === 'I' ? 'r' : 'i', d = def === 'I' ? 'i' : 'r', gain = missionGain(missionId, level);
   let got = move(s, d, 'h', gain); if (got < gain) got += move(s, other, 'h', gain - got);
   return got;
 }
-export function applyLoss(s, missionId, level) { const d = enemyOf(s) === 'I' ? 'i' : 'r'; return -move(s, 'h', d, Math.round(missionGain(missionId, level) * 0.4)); }
+export const LOSS_RATIO = 0.25;                                          // derrota: os humanos perdem 1/4 do que a vitória renderia e o inimigo ganha o mesmo tanto
+export function applyLoss(s, missionId, level) { const d = enemyOf(s) === 'I' ? 'i' : 'r'; return -move(s, 'h', d, Math.round(missionGain(missionId, level) * LOSS_RATIO)); }
 
 // Passo da guerra (a cada minuto): a expansão é lenta, na escala de dias. A cada minuto cada facção tem uma pequena chance de empurrar um quadrado vizinho
 // (contra os humanos ou contra a outra facção); quanto mais quadrados domina, mais chance. Só ataca a partir de um setor que domina.

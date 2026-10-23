@@ -40,7 +40,7 @@ enquanto a operação está em andamento. Na operação, o grupo compartilha os 
   no painel do setor há **duas barras**: a luta entre insetos e robôs e o avanço humano (azul, com os marcos de 50% e 100%), com setas de quem está ganhando terreno. A campanha local também anda sozinha (um passo por minuto com o jogo aberto, e recupera até 12 passos de quando esteve fechado).
 - **Progresso do setor:** cada missão vale um progresso base e **cada nível de ameaça soma +1**; **1 ponto = 0,01%** do setor.
   Base: Operação Gerador 1500 · Limpeza 600 · Coleta 500 · Faróis 500 · Defesa 700 · Extração 800 · Rainha 2000
-  (ex.: Operação Gerador no nível 10 = 1510 pontos = 15,10%). Com 50% ou mais o setor passa a ser dos humanos. Derrota devolve 40% do que a missão valeria ao inimigo.
+  (ex.: Operação Gerador no nível 10 = 1510 pontos = 15,10%). Com 50% ou mais o setor passa a ser dos humanos. Derrota devolve 25% (1/4) do que a missão valeria ao inimigo.
 
 ## Contas, mundo compartilhado e banco (Neon)
 Com `DATABASE_URL` definida o servidor liga **login obrigatório** (usuário, senha e confirmar senha) e a **campanha única para todos os jogadores**:
