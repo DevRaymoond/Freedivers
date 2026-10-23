@@ -22,6 +22,6 @@ O trabalho altera asset e lógica local de apresentação/animação; não muda 
 Ideia futura, ainda não implementada.
 
 1. **Sistema solar (online):** quando os humanos dominarem 100% do planeta, a campanha se expande para um sistema solar, com vários planetas, cada um com seu próprio mapa de setores e a mesma guerra lenta (dias) contra insetos e robôs.
-2. **Sistemas inimigos (somente local):** depois que os humanos dominarem o sistema solar, a campanha segue em direção ao sistema solar de cada facção (insetos e robôs). Essa fase fica apenas na campanha local de cada jogador, sem mundo compartilhado nem servidor.
+2. **Sistemas inimigos (somente local):** depois que os humanos dominarem o sistema solar, a campanha segue em direção ao sistema solar de cada facção (insetos e robôs). Antes essa fase seria só local; como a campanha local foi removida, precisa ser decidida de novo (online ou modalidade à parte).
 
 Pontos a decidir quando for implementar: mapas dos novos planetas (`assets/world.json` por planeta), seleção de planeta na aba Mapa, persistência por planeta, e como a temporada reinicia ao fim de cada etapa.

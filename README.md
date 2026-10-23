@@ -21,7 +21,7 @@ O host roda o mundo (inimigos, pelotões, ondas); cada jogador controla o própr
 enquanto a operação está em andamento. Na operação, o grupo compartilha os 3 reforços e **todos** precisam embarcar na nave.
 
 ## Modos de jogo
-- **Novo jogo = campanha local:** você sozinho contra o resto do mapa, sem conta; o progresso fica neste aparelho.
+- **Só campanha online:** a campanha local foi removida. O mundo é um só, compartilhado, e jogar sozinho ou em esquadrão vale para ele. Sem login só dá para ver o mapa.
 - **Modo online = mundo compartilhado** (precisa de login): o mapa é o mesmo para todos e muda ao vivo. Você ataca um setor sozinho ou entra no **esquadrão** de quem já está
   jogando naquele setor, se houver vaga (até 4). O host escolhe quem pode entrar: **Aberto**, **Só amigos** ou **Fechado**; dá para entrar com a operação em andamento.
 - **Amigos:** enviar e aceitar/recusar/cancelar pedido, remover, **bloquear/desbloquear**, ver quem está online e em qual setor, **convidar** para o esquadrão (convite vale 60 s) e
@@ -32,12 +32,12 @@ enquanto a operação está em andamento. Na operação, o grupo compartilha os 
 - **Amizades (Modo online → AMIZADES):** adicionar, pedidos, bloquear, convidar, **jogados recentemente** e **chat** (com amigos online e com o esquadrão). O Multipunk só repassa a
   mensagem em memória (até 300 caracteres, limite de 30 por minuto): **não grava conversa nem dados**. O histórico e a lista de recentes ficam só em `localStorage` do seu aparelho
   e dá para apagar. Mensagem para amigo offline não é entregue.
-- **Menu:** **Mapa** (campanha local, mundo online, partida livre, arsenal e melhorias) e **Comunicações** (amizades, chat, recentes e sala por código).
+- **Menu:** **Mapa** (mundo online, partida livre, arsenal e melhorias) e **Comunicações** (amizades, chat, recentes e sala por código).
 - **Estágios do setor:** *em disputa* (humanos abaixo de 50%) → *dominado* (50% ou mais, ainda restam inimigos: são necessárias mais missões para **erradicá-los**) → *fixo* (100% humano).
   O setor fixo resiste ao avanço inimigo (metade) e, se estiver atrás de território humano, **nenhuma facção alcança**: a guerra só avança de vizinho para vizinho, a partir de setores dominados por ela.
   Um setor dominado ou fixo ao lado de território inimigo aparece como **sob ataque** e pede missões de **defesa**.
 - **Guerra dinâmica:** a cada minuto cada facção ataca vários setores vizinhos, tanto os humanos quanto a outra facção (criando **fronteiras** onde insetos e robôs aparecem juntos). No mapa, fronteiras mostram a faixa roxa × vermelha e os setores que mudaram há pouco pulsam;
-  no painel do setor há **duas barras**: a luta entre insetos e robôs e o avanço humano (azul, com os marcos de 50% e 100%), com setas de quem está ganhando terreno. A campanha local também anda sozinha (um passo por minuto com o jogo aberto, e recupera até 12 passos de quando esteve fechado).
+  no painel do setor há **duas barras**: a luta entre insetos e robôs e o avanço humano (azul, com os marcos de 50% e 100%), com setas de quem está ganhando terreno. **Partida livre** mostra os setores que mais precisam de atenção (os que estão para ser retomados, os perto de dominar e as fronteiras) e a partida vale para o mundo. Sem contas no servidor (sem `DATABASE_URL`), ela vira um treino sem efeito no mundo.
 - **Progresso do setor:** cada missão vale um progresso base e **cada nível de ameaça soma +1**; **1 ponto = 0,01%** do setor.
   Base: Operação Gerador 1500 · Limpeza 600 · Coleta 500 · Faróis 500 · Defesa 700 · Extração 800 · Rainha 2000
   (ex.: Operação Gerador no nível 10 = 1510 pontos = 15,10%). Com 50% ou mais o setor passa a ser dos humanos. Derrota devolve 25% (1/4) do que a missão valeria ao inimigo.

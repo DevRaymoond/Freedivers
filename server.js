@@ -1,7 +1,7 @@
 // Servidor do Multipunk: serve o jogo (arquivos estáticos), contas (login/senha), mundo compartilhado da campanha e o relé WebSocket das salas.
 //   Salas: o host cria uma sala e recebe um CÓDIGO; só quem digitar o código entra (máx. 4 jogadores). O servidor não simula combate.
 //   Contas e mundo: com DATABASE_URL (Neon/PostgreSQL) o login é obrigatório e a campanha é uma só para todos os jogadores.
-//   Sem DATABASE_URL o jogo roda local, sem contas, com a campanha salva no navegador.
+//   Sem DATABASE_URL o jogo roda local, sem contas: só o treino, sem efeito no mundo.
 //
 //   Uso:  npm install && node server.js
 //   Variáveis (veja deploy/.env.example): PORT, HOST, DATABASE_URL, TRUST_PROXY, ALLOWED_ORIGINS, DEV, BCRYPT_COST, SESSION_DAYS, WAR_TICK_MIN
@@ -270,6 +270,6 @@ function broadcastWorld(d) {
     social = createSocial({ store, socketOf: id => { const w = socketsByUser.get(id); return w && w.readyState === 1 ? w : null; }, rooms, send, joinRoom, memberCount, MAX_PLAYERS });
     setInterval(() => store.purgeSessions().catch(() => {}), 3600000).unref();
     console.log(`Contas e mundo compartilhado ativos (${store.kind}).`);
-  } else console.log('Sem DATABASE_URL: jogo local, sem contas (campanha salva no navegador).');
+  } else console.log('Sem DATABASE_URL: jogo local, sem contas (só treino, sem mundo online).');
   server.listen(port, bindHost, () => console.log(`Multipunk em http://${bindHost === '0.0.0.0' ? 'localhost' : bindHost}:${port}  (WebSocket em /ws)`));
 })().catch(e => { console.error('Falha ao iniciar:', e.message); process.exit(1); });

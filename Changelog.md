@@ -41,3 +41,8 @@
 
 ## 2026-10-23 (derrota)
 - Derrota numa operação: os humanos perdem 1/4 do progresso que a vitória renderia e o inimigo avança o mesmo valor (`LOSS_RATIO` = 0,25; antes 40%).
+
+## 2026-10-23 (só campanha online)
+- Removida a campanha local (`WLOC`, salvamento e guerra offline); o save antigo `campaign` é apagado ao abrir. O menu Mapa mostra o mundo online (somente leitura sem login).
+- **Partida livre** agora lista os setores que mais precisam de atenção (prestes a ser retomados, perto de dominar, fronteiras) com nível e botão Jogar; a partida vale para o mundo online. Sem contas no servidor, continua o treino sem efeito.
+- A abertura da operação de um setor virou `launchSector`, usada pelo painel do mapa e pela Partida livre.
