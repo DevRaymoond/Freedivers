@@ -132,20 +132,21 @@ scene.add(ground);
 // Rochas com colisão e espiras decorativas (reconstruídas a cada missão conforme o tamanho do mapa)
 const rocks = [];
 const rockMat = new THREE.MeshStandardMaterial({ color: 0x6b5d4a, roughness: 1, flatShading: true });
+const GRID = { cell: 2, n: 0, off: 0, blocked: null, dirty: true, fields: new Map() };
 let rockMeshes = [], spireMeshes = [];
 function buildTerrain(R, count, avoid = [], data = null) {
   rockMeshes.forEach(m => scene.remove(m)); spireMeshes.forEach(m => scene.remove(m));
   rockMeshes = []; spireMeshes = []; rocks.length = 0;
-  ARENA_R = R;
+  ARENA_R = R; GRID.dirty = true;
   const addRock = (x, z, r) => {
     const m = new THREE.Mesh(new THREE.DodecahedronGeometry(r, 0), rockMat);
-    m.position.set(x, r * 0.6, z);
+    m.position.set(x, -r * 0.15, z);                      // enterrada: só o topo aparece
     m.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
     m.castShadow = m.receiveShadow = true;
     scene.add(m); rockMeshes.push(m);
-    rocks.push({ x, z, r: r * 0.9, y: m.position.y });
+    rocks.push({ x, z, r: r * 0.85, y: m.position.y });
   };
-  if (data) data.forEach(k => addRock(k[0], k[1], k[2] / 0.9));          // mesmas rochas do host
+  if (data) data.forEach(k => addRock(k[0], k[1], k[2] / 0.85));          // mesmas rochas do host
   else {
     let tries = 0;
     while (rockMeshes.length < count && tries++ < count * 30) {
@@ -511,7 +512,7 @@ function spawnEnemy(type, atPos, opts = {}) {
   scene.add(mesh);
   const e = {
     id: uid(), by: -1, dm: opts.dmMul || 1, type, t, mesh, hp, maxHp: hp, atkCd: rand(0, 0.5), shootCd: rand(1, 2.5), phase: Math.random() * 6,
-    st: 'walk', stT: rand(1.5, 3), volleyCd: 3, summonCd: 10, spd: mods.speed, elite,
+    st: 'walk', stT: rand(1.5, 3), volleyCd: 3, summonCd: 10, spd: mods.speed, elite, bias: Math.random() < 0.5 ? 1 : -1,
     pl: opts.pl || null, wave: opts.wave || 0, alert: !!opts.alert, slot: opts.slot || 0,
   };
   enemies.push(e);
@@ -582,6 +583,7 @@ function makeGenerator(x, z) {
   g.position.set(x, 0, z);
   scene.add(g);
   rocks.push({ x, z, r: 2.4, y: 1.5 });                     // colisão (jogador e inimigos contornam)
+  GRID.dirty = true;
   return { g, core, x, z, hp: 1400, max: 1400, active: false };
 }
 function damageGenerator(n) {
@@ -1069,6 +1071,7 @@ function updateOperation(m, dt) {
         op.waveActive = false;
         if (op.wave >= op.waves) {
           op.phase = 'extract'; m.progress = 0;
+          generator.active = false;                 // objetivo concluído: os inimigos passam a focar nos jogadores
           const geo = new THREE.TorusGeometry(50, 0.35, 6, 120);
           zoneRing = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xf28c1f }));
           zoneRing.rotation.x = Math.PI / 2; zoneRing.position.set(L.E.x, 0.3, L.E.z); scene.add(zoneRing);
@@ -1347,7 +1350,7 @@ function clearWorld() {
   flashes.forEach(f => scene.remove(f.m)); flashes = [];
   drops.forEach(d => scene.remove(d.m)); drops = [];
   turrets.forEach(T => scene.remove(T.g)); turrets = [];
-  if (generator) { scene.remove(generator.g); const i = rocks.findIndex(k => k.x === generator.x && k.z === generator.z); if (i >= 0) rocks.splice(i, 1); generator = null; }
+  if (generator) { scene.remove(generator.g); const i = rocks.findIndex(k => k.x === generator.x && k.z === generator.z); if (i >= 0) rocks.splice(i, 1); GRID.dirty = true; generator = null; }
   if (pad) { scene.remove(pad.g); pad = null; }
   if (zoneRing) { scene.remove(zoneRing); zoneRing = null; }
   if (plane) { scene.remove(plane.g); plane = null; }
@@ -1773,6 +1776,102 @@ function callStrike() {
   say('Ataque orbital marcado — afaste-se!', 1.8); beep(300, 0.4, 0.1);
 }
 
+// Contorno de pedras: se o caminho reto está bloqueado, escolhe o menor desvio livre (sempre pelo mesmo lado de cada inimigo),
+// o que também faz contornar paredes de pedras em vez de ficar empurrando uma delas.
+function pathBlocked(pos, dx, dz, radius, look) {
+  for (const k of rocks) {
+    const rx = k.x - pos.x, rz = k.z - pos.z;
+    const t = rx * dx + rz * dz;                                 // distância à frente até a pedra
+    if (t < -k.r || t > look + k.r) continue;
+    if (Math.abs(-rx * dz + rz * dx) < k.r + radius + 0.6) return true;   // distância lateral ao caminho
+  }
+  return false;
+}
+// Mapa de fluxo: grade de 2 m com as pedras como obstáculos. Uma busca em largura a partir do alvo diz, em cada célula,
+// para onde andar. Isso resolve "becos" e paredes de pedras que o desvio simples não resolve.
+function buildGrid() {
+  const R = ARENA_R + 6, c = GRID.cell;
+  GRID.off = R; GRID.n = Math.ceil(2 * R / c); GRID.blocked = new Uint8Array(GRID.n * GRID.n); GRID.fields.clear();
+  for (const k of rocks) {
+    const rr = k.r + 1.3;
+    const x0 = Math.max(0, Math.floor((k.x - rr + GRID.off) / c)), x1 = Math.min(GRID.n - 1, Math.floor((k.x + rr + GRID.off) / c));
+    const z0 = Math.max(0, Math.floor((k.z - rr + GRID.off) / c)), z1 = Math.min(GRID.n - 1, Math.floor((k.z + rr + GRID.off) / c));
+    for (let cz = z0; cz <= z1; cz++) for (let cx = x0; cx <= x1; cx++) {
+      if (Math.hypot((cx + 0.5) * c - GRID.off - k.x, (cz + 0.5) * c - GRID.off - k.z) < rr) GRID.blocked[cz * GRID.n + cx] = 1;
+    }
+  }
+  GRID.dirty = false;
+}
+function computeField(goal) {
+  const n = GRID.n, c = GRID.cell, blocked = GRID.blocked;
+  const dist = new Float32Array(n * n).fill(1e9), queue = new Int32Array(n * n);
+  const gx = Math.min(n - 1, Math.max(0, Math.floor((goal.x + GRID.off) / c))), gz = Math.min(n - 1, Math.max(0, Math.floor((goal.z + GRID.off) / c)));
+  let head = 0, tail = 0;
+  let sx = gx, sz = gz;
+  if (blocked[gz * n + gx]) {                                           // alvo colado numa pedra: parte da célula livre mais próxima
+    let bd = 1e9;
+    for (let dz = -6; dz <= 6; dz++) for (let dx = -6; dx <= 6; dx++) {
+      const nx = gx + dx, nz = gz + dz;
+      if (nx < 0 || nz < 0 || nx >= n || nz >= n || blocked[nz * n + nx]) continue;
+      const dd = dx * dx + dz * dz; if (dd < bd) { bd = dd; sx = nx; sz = nz; }
+    }
+  }
+  dist[sz * n + sx] = 0; queue[tail++] = sz * n + sx;
+  while (head < tail) {
+    const cur = queue[head++], cx = cur % n, cz = (cur - cx) / n, d = dist[cur];
+    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+      if (!dx && !dz) continue;
+      const nx = cx + dx, nz = cz + dz;
+      if (nx < 0 || nz < 0 || nx >= n || nz >= n) continue;
+      const ni = nz * n + nx;
+      if (dist[ni] <= d + 1 || blocked[ni]) continue;
+      if (dx && dz && (blocked[cz * n + nx] || blocked[nz * n + cx])) continue;       // não corta quina de pedra
+      dist[ni] = d + 1; queue[tail++] = ni;
+    }
+  }
+  return { dist, gx, gz, t: performance.now() };
+}
+function flowDir(pos, tg) {
+  if (GRID.dirty) buildGrid();
+  const key = tg.gen ? 'gen' : 'p' + tg.pid, n = GRID.n, c = GRID.cell;
+  let f = GRID.fields.get(key);
+  const gx = Math.floor((tg.pos.x + GRID.off) / c), gz = Math.floor((tg.pos.z + GRID.off) / c);
+  if (!f || performance.now() - f.t > 500 || (Math.abs(f.gx - gx) + Math.abs(f.gz - gz) > 2 && performance.now() - f.t > 150)) { f = computeField(tg.pos); GRID.fields.set(key, f); }
+  const cx = Math.floor((pos.x + GRID.off) / c), cz = Math.floor((pos.z + GRID.off) / c);
+  if (cx < 0 || cz < 0 || cx >= n || cz >= n) return null;
+  let best = f.dist[cz * n + cx], bx = -1, bz = -1;
+  for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+    const nx = cx + dx, nz = cz + dz;
+    if ((!dx && !dz) || nx < 0 || nz < 0 || nx >= n || nz >= n) continue;
+    const d = f.dist[nz * n + nx];
+    if (d < best - 0.01) { best = d; bx = nx; bz = nz; }
+  }
+  if (bx < 0 && GRID.blocked[cz * n + cx]) {                            // dentro da zona de uma pedra: sai pela célula livre mais próxima
+    let bd = 1e9;
+    for (let dz = -4; dz <= 4; dz++) for (let dx = -4; dx <= 4; dx++) {
+      const nx = cx + dx, nz = cz + dz;
+      if (nx < 0 || nz < 0 || nx >= n || nz >= n || GRID.blocked[nz * n + nx] || f.dist[nz * n + nx] >= 1e9) continue;
+      const dd = dx * dx + dz * dz + f.dist[nz * n + nx] * 0.01; if (dd < bd) { bd = dd; bx = nx; bz = nz; }
+    }
+  }
+  if (bx < 0) return null;
+  const vx = (bx + 0.5) * c - GRID.off - pos.x, vz = (bz + 0.5) * c - GRID.off - pos.z, l = Math.hypot(vx, vz) || 1;
+  return new THREE.Vector3(vx / l, 0, vz / l);
+}
+function steerRocks(pos, dir, radius, e, tg) {
+  const look = 7;
+  if (!pathBlocked(pos, dir.x, dir.z, radius, look)) { e.sN = 0; return dir; }
+  if (tg) { const f = flowDir(pos, tg); if (f) return f; }
+  if (e.sN > 0 && e.sdir && !pathBlocked(pos, e.sdir.x, e.sdir.z, radius, 3)) { e.sN--; return e.sdir; }   // mantém o desvio escolhido
+  const base = Math.atan2(dir.z, dir.x);
+  for (const deg of [30, 60, 90, 120, 150]) {
+    for (const sg of [e.bias, -e.bias]) {
+      const a = base + sg * deg * Math.PI / 180, dx = Math.cos(a), dz = Math.sin(a);
+      if (!pathBlocked(pos, dx, dz, radius, look)) { e.sdir = new THREE.Vector3(dx, 0, dz); e.sN = 45; e.bias = sg; return e.sdir; }
+    }
+  }
+  return dir;
+}
 function resolveRocks(pos, radius) {
   for (const k of rocks) {
     const dx = pos.x - k.x, dz = pos.z - k.z;
@@ -1940,7 +2039,7 @@ function patrolMove(e, dt) {
   e.phase += dt * 5; m.position.y = Math.abs(Math.sin(e.phase)) * 0.08;
   if (d > 0.5) {
     const sp = Math.min(e.t.speed * 0.7 * e.spd, 2.3 + d * 1.6);
-    to.normalize(); m.position.addScaledVector(to, sp * dt);
+    to.normalize(); m.position.addScaledVector(steerRocks(m.position, to, e.t.radius * 0.6, e), sp * dt);
     m.rotation.y = Math.atan2(-to.x, -to.z);
   } else m.rotation.y = Math.atan2(-Math.sin(pl.heading), -Math.cos(pl.heading));
 }
@@ -1955,7 +2054,10 @@ function updateEnemies(dt) {
     const dist = Math.max(0, to.length() - tg.rad);
     const dir = to.normalize();
     const hurt = d => tg.gen ? damageGenerator(d * mods.edmg * e.dm) : (tg.pid >= 0 ? hurtPlayer(tg.pid, d * mods.edmg * e.dm) : 0);
-    const walkTo = sp => { m.position.addScaledVector(dir, sp * dt * e.spd); };
+    const walkTo = sp => {                                   // anda para o alvo (ou se afasta se sp < 0), contornando pedras
+      const d0 = sp >= 0 ? dir : dir.clone().negate();
+      m.position.addScaledVector(steerRocks(m.position, d0, e.t.radius * 0.6, e, sp >= 0 ? tg : null), Math.abs(sp) * dt * e.spd);
+    };
     e.phase += dt * (e.type === 'crawler' || e.type === 'bomber' ? 14 : 7);
     m.position.y = Math.abs(Math.sin(e.phase)) * 0.12;
     m.rotation.y = Math.atan2(-dir.x, -dir.z);
@@ -1979,7 +2081,7 @@ function updateEnemies(dt) {
       e.stT -= dt;
       if (e.st === 'walk') {
         if (dist > 3) walkTo(e.t.speed);
-        if (e.stT <= 0 && dist < 24 && dist > 7) { e.st = 'wind'; e.stT = 0.8; e.cdir = dir.clone(); noise(0.3, 0.12, 300); }
+        if (e.stT <= 0 && dist < 24 && dist > 7 && !pathBlocked(m.position, dir.x, dir.z, e.t.radius * 0.6, dist)) { e.st = 'wind'; e.stT = 0.8; e.cdir = dir.clone(); noise(0.3, 0.12, 300); }
         else if (dist <= 2.6) { e.atkCd -= dt; if (e.atkCd <= 0) { e.atkCd = 0.9; hurt(e.t.dmg * 0.6); } }
       } else if (e.st === 'wind') {
         m.position.x += rand(-1, 1) * 0.03; m.position.z += rand(-1, 1) * 0.03;
@@ -2582,5 +2684,5 @@ window.__freedivers = window.__multipunk = {
   player, keys, tick, startMission,
   get enemies() { return enemies; }, get state() { return state; }, get kills() { return kills; },
   get mission() { return mission; }, setMouse(v) { mouseDown = v; },
-  get camPos() { return camPos; }, get generator() { return generator; }, get strikes() { return strikes; }, switchWeapon, callStrike, spawnEnemy, damageEnemy, get pods() { return pods; }, endMission, get save() { return save; }, get level() { return level; }, get mods() { return mods; }, addXp, get platoons() { return platoons; }, get plane() { return plane; }, get opLayout() { return opLayout; }, get stats() { return stats; }, get xpNeed() { return xpNeed; }, respawnPlayer, abortMission, computeScore, get checkpoint() { return checkpoint; }, net, others, get enemyById() { return enemyById; }, get crates() { return crates; }, get drops() { return drops; }, get turrets() { return turrets; }, get uiOpen() { return uiOpen; }, buildSnapshot, applySnapshot, killsBy: () => killsBy, set stateX(v) { state = v; }, get wts() { return wts; }, damage: n => damagePlayer(n), get beacons() { return beacons; }, get pad() { return pad; },
+  get camPos() { return camPos; }, get rocks() { return rocks; }, get generator() { return generator; }, get strikes() { return strikes; }, switchWeapon, callStrike, spawnEnemy, damageEnemy, get pods() { return pods; }, endMission, get save() { return save; }, get level() { return level; }, get mods() { return mods; }, addXp, get platoons() { return platoons; }, get plane() { return plane; }, get opLayout() { return opLayout; }, get stats() { return stats; }, get xpNeed() { return xpNeed; }, respawnPlayer, abortMission, computeScore, get checkpoint() { return checkpoint; }, net, others, get enemyById() { return enemyById; }, get crates() { return crates; }, get drops() { return drops; }, get turrets() { return turrets; }, get uiOpen() { return uiOpen; }, buildSnapshot, applySnapshot, killsBy: () => killsBy, set stateX(v) { state = v; }, get wts() { return wts; }, damage: n => damagePlayer(n), get beacons() { return beacons; }, get pad() { return pad; },
 };
