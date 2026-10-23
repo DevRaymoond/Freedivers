@@ -34,3 +34,7 @@
 - Início da campanha: o planeta é dos humanos; insetos (oeste) e robôs (leste) começam com só 2x2 setores cada (`SEEDS` em `worldlogic.mjs`).
 - A expansão é lenta, na escala de dias: a cada minuto cada facção tem uma pequena chance (`ATTACK_BASE`, cresce com os setores que domina) de empurrar um vizinho. Sem intervenção dos jogadores, os primeiros setores caem em ~2 semanas e o planeta em ~3 meses.
 - Mundos salvos com o desenho antigo (servidor e campanha local) são reiniciados sozinhos (`isOldLayout`). A campanha local recupera até 3 dias de guerra ao reabrir o jogo.
+
+## 2026-10-23 (inimigos avançam mais fácil)
+- Enquanto um setor não é dominado pelos humanos (menos de 50%), a facção que tem 10% ou mais nele pode avançar para os setores vizinhos (antes só avançava a partir de setores que dominava por completo).
+- Vantagem de progresso do inimigo: cada avanço empurra 1,5x (`ENEMY_EDGE`, 1,2% a 3,9% por ataque), mais que os jogadores ganham por missão; frequência base reajustada para 0,5% por minuto (`ATTACK_BASE`). Sem intervenção dos jogadores: ~30 setores inimigos em 30 dias, ~95 em 60, planeta tomado em ~4 meses.

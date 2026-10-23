@@ -86,17 +86,20 @@ export function applyLoss(s, missionId, level) { const d = enemyOf(s) === 'I' ? 
 
 // Passo da guerra (a cada minuto): a expansão é lenta, na escala de dias. A cada minuto cada facção tem uma pequena chance de empurrar um quadrado vizinho
 // (contra os humanos ou contra a outra facção); quanto mais quadrados domina, mais chance. Só ataca a partir de um setor que domina.
-export const ATTACK_BASE = 0.008;
+export const ATTACK_BASE = 0.005;
+export const ENEMY_EDGE = 1.5;                                                 // vantagem do inimigo no progresso (os jogadores ganham `missionGain`; eles empurram 1,5x)
 export function warTick(idx, sec, seed, minHumanSectors = 3) {
   const R = rng(seed), events = [], changed = new Set();
   for (const f of ['I', 'R']) {
     const fl = f.toLowerCase(), fronts = []; let dom = 0;
-    for (const o of idx.cells) { const k = key(o.c, o.r); if (dominant(sec.get(k)) === f) { dom++; for (const n of idx.nbr.get(k)) if (dominant(sec.get(n)) !== f) fronts.push(n); } }
+    for (const o of idx.cells) { const k = key(o.c, o.r); const sk = sec.get(k), dm = dominant(sk) === f;
+      if (dm) dom++;
+      if (dm || (!isHuman(sk) && sk[fl] >= MIX_MIN)) for (const n of idx.nbr.get(k)) if (dominant(sec.get(n)) !== f) fronts.push(n); }   // enquanto o setor não é dominado pelos humanos, a facção que tem presença nele pode avançar para os vizinhos
     if (!fronts.length || R() > Math.min(0.25, ATTACK_BASE * (1 + dom / 12))) continue;
     const tk = fronts[Math.floor(R() * fronts.length)], t = sec.get(tk), tc = idx.byKey.get(tk);
     const def = ['h', 'i', 'r'].filter(x => x !== fl).sort((x, y) => t[y] - t[x])[0];
     if (!t[def]) continue;
-    let push = 80 + Math.floor(R() * 180);                                       // 0,80% a 2,60% por ataque
+    let push = Math.round((80 + Math.floor(R() * 180)) * ENEMY_EDGE);            // 1,20% a 3,90% por ataque: avançar é mais fácil para eles do que para os jogadores
     if (def === 'h') {
       if (humanCount(sec) <= minHumanSectors && isHuman(t)) continue;           // o último reduto não cai
       if (t.h >= SCALE) push = Math.round(push * 0.5);                          // setor fixo resiste
