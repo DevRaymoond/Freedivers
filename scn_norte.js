@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { lerpHex, smooth } from './scn_util.js';
 import { C, peak, pine, radioTower, dish, building, container, bridge, lamp, iceFall } from './scn_props.js';
-import { cliffRing, ramp, derrick, tank, banner, fence } from './scn_props2.js';
+import { cliffRing, ramp, derrick, tank, banner, fence, obstacleSet } from './scn_props2.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const SKY = { top: 0x2a74d0, horizon: 0xcfe3f6, sunDir: [0.55, 0.5, 0.45], sunCol: 0xfff4dc, cover: 0.5, haze: 0.28, cloudShade: 0x9fb6d6 };
@@ -85,7 +85,7 @@ const montanhas = {
 };
 
 const posto = {
-  name: 'Posto Avançado', clutter: 'snow', sky: { ...SKY, cover: 0.38, cloudShade: 0xb4c6de }, env: ENV, ground: { kind: 'snow', tint: 0xf4f8ff }, obstacle,
+  name: 'Posto Avançado', clutter: 'snow', sky: { ...SKY, cover: 0.38, cloudShade: 0xb4c6de }, env: ENV, ground: { kind: 'snow', tint: 0xf4f8ff }, obstacle: obstacleSet('military', obstacle),
   build(ctx) {
     ctx.mist(12, ctx.R + 30, ctx.R + 260, 5, 20, 120, 0xeaf3ff, 0.36);
     const { R, solid, glow, rnd, noise } = ctx, a0 = 0.5, pr = R + 105, padH = 16;

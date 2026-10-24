@@ -168,3 +168,43 @@ export function scatterClutter(ctx, kind) {
     inside(40, (x, z) => solid.rock(0.25 + rnd() * 0.6, lerpHex(0x7a766a, 0x4a4840, rnd()), { x, y: 0, z, sy: 0.6 }, 0, 0.22));
   }
 }
+
+// ───────────── obstáculos temáticos (formas unitárias para a arena) ─────────────
+const crate = (kit, x, z, y, s, col, ry = 0) => { kit.box(s, s * 0.9, s, col, { x, y, z, ry }, 1, 1, 0.14); kit.box(s * 1.02, s * 0.1, s * 1.02, 0x3a2e22, { x, y: y + s * 0.45, z, ry }); };
+const barrel = (kit, x, z, y, col) => { kit.cyl(0.42, 0.42, 1.0, 8, col, { x, y, z }, 0.14); kit.cyl(0.44, 0.44, 0.08, 8, 0x2a2d34, { x, y: y + 0.5, z }); };
+const sandbags = (kit, x, z, ry = 0, col = 0xb9a67a) => { for (let r = 0; r < 3; r++) for (let i = 0; i < 4 - r; i++) kit.box(0.9, 0.42, 0.55, col, { x: x + Math.cos(ry) * (i - (3 - r) / 2) * 0.85, y: r * 0.4, z: z - Math.sin(ry) * (i - (3 - r) / 2) * 0.85, ry }, 1, 1, 0.2); };
+const jersey = (kit, x, z, ry = 0, col = 0x9a9ca2) => { kit.box(1.8, 0.9, 0.55, col, { x, y: 0, z, ry }, 0.72, 0.5, 0.12); kit.box(1.82, 0.12, 0.3, 0xe2a72b, { x, y: 0.5, z, ry }); };
+const carWreck = (kit, x, z, col = 0x7a4a2a, ry = 0) => { kit.box(3.2, 0.8, 1.5, col, { x, y: 0.2, z, ry, rz: 0.1 }, 1, 1, 0.16); kit.box(1.6, 0.7, 1.4, 0x3a3d44, { x: x - Math.sin(ry) * 0.2, y: 1.0, z, ry, rz: 0.1 }, 0.8, 0.9, 0.16); };
+export function obstacleSet(theme, base) {
+  return (kit, r, k) => {
+    if (k % 2 === 1 || !THEMES[theme]) return base(kit, r, k);
+    THEMES[theme](kit, k / 2 | 0);
+  };
+}
+const THEMES = {
+  military(kit, v) {
+    if (v === 0) { sandbags(kit, 0, 0, 0); sandbags(kit, 0.2, 0.9, 0.2); crate(kit, 1.2, -0.3, 0, 1.0, 0x6a5a3a); }
+    else if (v === 1) { jersey(kit, -0.9, 0, 0); jersey(kit, 0.9, 0.2, 0.2); crate(kit, 0, 1.0, 0, 1.0, 0x8a4a2a); }
+    else { crate(kit, 0, 0, 0, 1.4, 0x2f5d3a); crate(kit, 1.2, 0.3, 0, 1.2, 0xc2672a, 0.3); crate(kit, 0.5, 0.2, 1.3, 1.0, 0x6a5a3a, 0.5); barrel(kit, -1.0, 0.8, 0, 0xb52a22); }
+  },
+  industrial(kit, v) {
+    if (v === 0) { for (let i = 0; i < 4; i++) barrel(kit, Math.cos(i * 1.6) * 0.8, Math.sin(i * 1.6) * 0.8, 0, [0x7a3a1a, 0x4a4a52, 0xa8651f][i % 3]); crate(kit, 0, 0, 1.0, 0.9, 0x4a3a2a); }
+    else if (v === 1) { kit.box(3.0, 0.3, 0.8, 0x3a3d44, { y: 0.9 }); for (const s of [-1, 1]) kit.box(0.3, 0.9, 0.6, 0x575b64, { x: s * 1.3 }); kit.box(1.2, 0.8, 1.0, 0x8a4a2a, { x: -0.6, y: 1.2 }, 0.9, 0.9, 0.2); }
+    else { crate(kit, 0, 0, 0, 1.4, 0x3a3436); kit.box(1.0, 1.6, 0.4, 0x6a3a1a, { x: 1.0, rz: 0.3 }); barrel(kit, -1.0, 0.5, 0, 0x7a3a1a); }
+  },
+  ruincity(kit, v) {
+    if (v === 0) carWreck(kit, 0, 0, 0x6a4a2a, 0.4);
+    else if (v === 1) { kit.box(2.2, 1.6, 1.8, 0x7a6a58, { ry: 0.3, rz: 0.15 }, 0.95, 0.95, 0.2); kit.box(1.4, 1.0, 1.2, 0x5a4a3c, { y: 1.6, ry: 0.8 }, 0.9, 0.9, 0.2); }
+    else { jersey(kit, -0.9, 0, 0.3, 0x8a7a68); crate(kit, 0.9, 0.1, 0, 1.0, 0x5a4a3a); kit.box(0.2, 2.0, 0.2, 0x3a342e, { x: 0.3, z: -0.8, rz: 0.4 }); }
+  },
+  village(kit, v) {
+    if (v === 0) { kit.box(1.8, 0.2, 1.0, 0x6a4a2c, { y: 0.7 }); for (const s of [-1, 1]) kit.cyl(0.5, 0.5, 0.2, 10, 0x4a3420, { x: s * 0.8, y: 0.5, z: 0.6, rx: Math.PI / 2 }); crate(kit, 0, 0, 0.9, 0.7, 0x8a6a2c); }
+    else if (v === 1) { for (let i = 0; i < 3; i++) barrel(kit, Math.cos(i * 2.1) * 0.7, Math.sin(i * 2.1) * 0.7, 0, 0x7a5a30); }
+    else { crate(kit, 0, 0, 0, 1.2, 0x9a7a40); crate(kit, 0.9, 0.2, 0, 1.0, 0x6a4a2c, 0.4); kit.cyl(0.6, 0.6, 0.7, 9, 0xd9b84a, { x: -0.8, z: 0.5, rz: Math.PI / 2 }, 0.2); }
+  },
+  fortress(kit, v) {
+    if (v === 0) { kit.box(1.4, 2.2, 1.4, 0x3a3436, { ry: 0.3 }, 0.8, 0.8, 0.16); kit.cyl(0.5, 0.35, 0.5, 6, 0x2a2420, { y: 2.2 }); }
+    else if (v === 1) { kit.box(2.4, 1.0, 1.0, 0x3a3436, { ry: 0.2 }, 1, 1, 0.16); kit.box(2.0, 0.6, 0.8, 0x4a4042, { y: 1.0, ry: 0.2 }, 1, 1, 0.16); }
+    else { kit.rock(0.9, 0x2a2224, { sy: 1.4 }, 0, 0.24); kit.box(0.8, 1.6, 0.5, 0x6a2418, { x: 0.9, z: 0.2, rz: 0.2 }); }
+  },
+};

@@ -1,7 +1,7 @@
 // Região Sudeste: dunas e cânions, cidade abandonada e cratera gigante.
 import { lerpHex, smooth } from './scn_util.js';
 import { C, building, container, bridge, lamp, radioTower } from './scn_props.js';
-import { derrick, mesa, tank, banner, arch, wall, smokestack, crane, cliffRing } from './scn_props2.js';
+import { derrick, mesa, tank, banner, arch, wall, smokestack, crane, cliffRing, obstacleSet } from './scn_props2.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const SKY = { top: 0x4a7fc0, horizon: 0xf3c9a0, sunDir: [0.6, 0.4, 0.4], sunCol: 0xffe2b0, cover: 0.28, haze: 0.72, cloudCol: 0xfff0e0, cloudShade: 0xe0a67c };
@@ -58,7 +58,7 @@ const dunas = {
 };
 
 const cidade = {
-  name: 'Cidade Abandonada', clutter: 'sand', sky: { ...SKY, haze: 0.8, cover: 0.34 }, env: { ...ENV, near: 90, far: 620 }, ground: { kind: 'sand', tint: 0xf2d2b0 }, obstacle,
+  name: 'Cidade Abandonada', clutter: 'sand', sky: { ...SKY, haze: 0.8, cover: 0.34 }, env: { ...ENV, near: 90, far: 620 }, ground: { kind: 'sand', tint: 0xf2d2b0 }, obstacle: obstacleSet('ruincity', obstacle),
   build(ctx) {
     ctx.mist(14, ctx.R + 20, ctx.R + 200, 2, 16, 120, 0xe8c49a, 0.36);
     const { R, rnd, solid, glow } = ctx, hfn = duneHeight(ctx, { amp: 50 });

@@ -1,7 +1,7 @@
 // Região Central: campos abertos, vilarejo e torre de vigilância (planícies).
 import { lerpHex, smooth } from './scn_util.js';
 import { C, tree, building, container, lamp, radioTower, dish } from './scn_props.js';
-import { derrick, mesa, houseWood, windmill, fence, banner, ruinTower, fern, hay, tent, stall, watchtowerWood, well, barn, bush, cliffRing, wall } from './scn_props2.js';
+import { derrick, mesa, houseWood, windmill, fence, banner, ruinTower, fern, hay, tent, stall, watchtowerWood, well, barn, bush, cliffRing, wall, obstacleSet } from './scn_props2.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const SKY = { top: 0x3a82dc, horizon: 0xdcebf5, sunDir: [0.5, 0.55, 0.35], sunCol: 0xfff0cc, cover: 0.55, haze: 0.4, cloudShade: 0xa8bdd8 };
@@ -71,7 +71,7 @@ const campos = {
 };
 
 const vilarejo = {
-  name: 'Vilarejo', clutter: 'grass', sky: SKY, env: ENV, ground: { kind: 'grass', tint: 0xf4efd8 }, obstacle,
+  name: 'Vilarejo', clutter: 'grass', sky: SKY, env: ENV, ground: { kind: 'grass', tint: 0xf4efd8 }, obstacle: obstacleSet('village', obstacle),
   build(ctx) {
     const { R, noise, rnd, solid, glow } = ctx, hfn = plainsHeight(ctx, { river: true, riverZ: -170 });
     ctx.water(-2.6, 0x4a9ac0, 0.88, 0.1);
@@ -97,7 +97,7 @@ const vilarejo = {
 };
 
 const torre = {
-  name: 'Torre de Vigilância', clutter: 'grass', sky: SKY, env: ENV, ground: { kind: 'grass', tint: 0xf0ecd2 }, obstacle,
+  name: 'Torre de Vigilância', clutter: 'grass', sky: SKY, env: ENV, ground: { kind: 'grass', tint: 0xf0ecd2 }, obstacle: obstacleSet('military', obstacle),
   build(ctx) {
     const { R, noise, rnd, solid, glow } = ctx, tx = Math.cos(0.5) * (R + 90), tz = Math.sin(0.5) * (R + 90);
     const hfn = plainsHeight(ctx, { river: false, add: (x, z, r) => { const d = Math.hypot(x - tx, z - tz); return (1 - smooth(14, 56, d)) * (30 + 8 * noise.fbm(x * 0.05, z * 0.05, 2)); } });

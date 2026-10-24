@@ -1,7 +1,7 @@
 // Região Leste: campos de lava, fortaleza corrompida e zona de extração.
 import { lerpHex, smooth } from './scn_util.js';
 import { C, peak, building, bridge, lamp, radioTower } from './scn_props.js';
-import { derrick, tank, smokestack, wall, conveyor, crane, banner, brazier, mesa, cliffRing } from './scn_props2.js';
+import { derrick, tank, smokestack, wall, conveyor, crane, banner, brazier, mesa, cliffRing, obstacleSet } from './scn_props2.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const SKY = { top: 0x1c0a0e, horizon: 0xe0561e, sunDir: [-0.5, 0.18, 0.5], sunCol: 0xff8a3a, cover: 0.78, haze: 0.62, cloudCol: 0x6a2a20, cloudShade: 0x1a0a0a, sunSize: 200 };
@@ -76,7 +76,7 @@ const campos = {
 };
 
 const fortaleza = {
-  name: 'Fortaleza Corrompida', clutter: 'basalt', sky: SKY, env: { ...ENV, fogColor: 0x6a2416 }, ground: { kind: 'basalt', tint: 0xffffff }, obstacle,
+  name: 'Fortaleza Corrompida', clutter: 'basalt', sky: SKY, env: { ...ENV, fogColor: 0x6a2416 }, ground: { kind: 'basalt', tint: 0xffffff }, obstacle: obstacleSet('fortress', obstacle),
   build(ctx) {
     ctx.mist(14, ctx.R + 20, ctx.R + 220, -1, 10, 120, 0xff7a40, 0.22);
     const { R, rnd, solid, glow } = ctx, hfn = lavaHeight(ctx, { moat: 22 });
@@ -99,7 +99,7 @@ const fortaleza = {
 };
 
 const extracao = {
-  name: 'Zona de Extração', clutter: 'basalt', sky: SKY, env: { ...ENV, fogColor: 0x7a2c14 }, ground: { kind: 'basalt', tint: 0xffffff }, obstacle,
+  name: 'Zona de Extração', clutter: 'basalt', sky: SKY, env: { ...ENV, fogColor: 0x7a2c14 }, ground: { kind: 'basalt', tint: 0xffffff }, obstacle: obstacleSet('industrial', obstacle),
   build(ctx) {
     ctx.mist(14, ctx.R + 20, ctx.R + 220, -1, 10, 120, 0xff8a50, 0.22);
     const { R, rnd, solid, glow } = ctx, hfn = lavaHeight(ctx, { moat: 18, moatAmt: 0.7 });
