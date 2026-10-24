@@ -4,6 +4,7 @@ import { clone as cloneSkeleton } from './lib/jsm/utils/SkeletonUtils.js';
 import { net } from './net.js';
 import { loadBots, createBot, animateBot, botsReady } from './bots.js';
 import * as WL from './worldlogic.mjs';
+import { buildScenery, solidMaterial, groundTexture, REGION_OF_BIOME, REGIONS } from './scenery.js';
 
 // Configurações do jogador (salvas só neste aparelho)
 const SET_KEY = 'multipunk_settings';
@@ -74,6 +75,7 @@ const MISSIONS = [
 const BIOME_CSS = {
   desert: 'linear-gradient(135deg,#7a5a38,#c9a27a 55%,#3a2a1c)', ice: 'linear-gradient(135deg,#34506c,#aec9e2 55%,#25364a)',
   toxic: 'linear-gradient(135deg,#25381c,#7fa65a 55%,#16210f)', volcanic: 'linear-gradient(135deg,#3a1410,#c2502a 55%,#160806)',
+  plains: 'linear-gradient(135deg,#3a4a1c,#b8c068 55%,#2a3414)',
 };
 
 // Melhorias permanentes: ganhos pequenos e fixos por nível, custo alto (compradas com créditos, salvas no navegador)
@@ -176,7 +178,7 @@ function makeGroundTexture() {
   return t;
 }
 const ground = new THREE.Mesh(
-  new THREE.CircleGeometry(330, 64),
+  new THREE.CircleGeometry(330, 96),
   new THREE.MeshStandardMaterial({ map: makeGroundTexture(), roughness: 1 })
 );
 ground.rotation.x = -Math.PI / 2;
@@ -188,19 +190,38 @@ const rocks = [];
 const rockMat = new THREE.MeshStandardMaterial({ color: 0x6b5d4a, roughness: 1, flatShading: true });
 const GRID = { cell: 2, n: 0, off: 0, blocked: null, dirty: true, fields: new Map() };
 let rockMeshes = [], spireMeshes = [];
+// Cenário da missão: região (bioma do setor) + variante (0..2) + semente; escolhido em startMission e enviado aos outros jogadores
+let pendingScn = { biome: 'ice', variant: 0, seed: 1 }, scn = null;
+const groundTex = {};
+function buildSceneryFor(R) {
+  if (scn) { scn.dispose(); scn = null; }
+  const region = REGION_OF_BIOME[pendingScn.biome] || 'sudeste';
+  scn = buildScenery({ region, variant: pendingScn.variant, R, seed: pendingScn.seed, touch: isTouch });
+  scene.add(scn.group);
+  const e = scn.env, far = isTouch ? Math.min(e.far, 340) : e.far, near = isTouch ? Math.min(e.near, 90) : e.near;
+  scene.background.set(e.fogColor); scene.fog.color.set(e.fogColor); scene.fog.near = near; scene.fog.far = far;
+  camera.far = isTouch ? Math.min(e.camFar, 440) : e.camFar; camera.updateProjectionMatrix();
+  renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = e.exposure ?? 1.12;                // cor mais rica e contraste de cinema
+  hemi.color.set(e.hemi[0]); hemi.groundColor.set(e.hemi[1]); hemi.intensity = e.hemi[2]; sun.color.set(e.sun[0]); sun.intensity = e.sun[1];
+  const g = scn.ground, key = g.kind;
+  if (!groundTex[key]) groundTex[key] = groundTexture(key, 7);
+  ground.material.map = groundTex[key]; ground.material.color.set(g.tint ?? 0xffffff); ground.material.needsUpdate = true;
+  ground.scale.setScalar((R + 3.5) / 330); groundTex[key].repeat.set((R + 3.5) / 330 * 60, (R + 3.5) / 330 * 60);
+}
 function buildTerrain(R, count, avoid = [], data = null) {
   rockMeshes.forEach(m => scene.remove(m)); spireMeshes.forEach(m => scene.remove(m));
   rockMeshes = []; spireMeshes = []; rocks.length = 0;
   ARENA_R = R; GRID.dirty = true;
-  const addRock = (x, z, r) => {
-    const m = new THREE.Mesh(new THREE.DodecahedronGeometry(r, 0), rockMat);
-    m.position.set(x, -r * 0.15, z);                      // enterrada: só o topo aparece
-    m.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
+  buildSceneryFor(R);
+  const solid = solidMaterial();
+  const addRock = (x, z, r, k) => {
+    const geo = scn.obstacle(k, r), m = geo ? new THREE.Mesh(geo, solid) : new THREE.Mesh(new THREE.DodecahedronGeometry(r, 0), rockMat);
+    if (geo) { m.scale.setScalar(r); m.position.set(x, -r * 0.08, z); m.rotation.y = Math.random() * 6.28; } else { m.position.set(x, -r * 0.15, z); m.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3); }
     m.castShadow = m.receiveShadow = true;
     scene.add(m); rockMeshes.push(m);
-    rocks.push({ x, z, r: r * 0.85, y: m.position.y });
+    rocks.push({ x, z, r: r * 0.85, y: -r * 0.15, k });
   };
-  if (data) data.forEach(k => addRock(k[0], k[1], k[2] / 0.85));          // mesmas rochas do host
+  if (data) data.forEach((k, i) => addRock(k[0], k[1], k[2] / 0.85, k[4] ?? i));          // mesmas rochas do host
   else {
     let tries = 0;
     while (rockMeshes.length < count && tries++ < count * 30) {
@@ -209,17 +230,8 @@ function buildTerrain(R, count, avoid = [], data = null) {
       const d = 8 + Math.random() * (R - 14);
       const x = Math.cos(a) * d, z = Math.sin(a) * d;
       if (avoid.some(v => Math.hypot(v.x - x, v.z - z) < v.r + r)) continue;
-      addRock(x, z, r);
+      addRock(x, z, r, rockMeshes.length);
     }
-  }
-  for (let i = 0; i < 16; i++) {
-    const a = Math.random() * Math.PI * 2;
-    const d = R + 5 + Math.random() * 25;
-    const h = 18 + Math.random() * 30;
-    const m = new THREE.Mesh(new THREE.ConeGeometry(2 + Math.random() * 3, h, 6), rockMat);
-    m.position.set(Math.cos(a) * d, h / 2, Math.sin(a) * d);
-    m.castShadow = true;
-    scene.add(m); spireMeshes.push(m);
   }
 }
 buildTerrain(95, 45, [{ x: 0, z: 0, r: 10 }]);
@@ -231,12 +243,7 @@ const BIOMES = {
   toxic:    { bg: 0x5f7f4c, ground: 0x9fd08a, rock: 0x445436, sky: 0xcdf2a0, under: 0x2a3a22, sun: 0xd8ffb0 },
   volcanic: { bg: 0x4a2220, ground: 0xc8806a, rock: 0x2c2220, sky: 0xff9a6a, under: 0x301410, sun: 0xff8a5a },
 };
-function applyBiome(name) {
-  const b = BIOMES[name] || BIOMES.desert;
-  scene.background.set(b.bg); scene.fog.color.set(b.bg);
-  ground.material.color.set(b.ground); rockMat.color.set(b.rock);
-  hemi.color.set(b.sky); hemi.groundColor.set(b.under); sun.color.set(b.sun);
-}
+function applyBiome(name, variant = 0, seed = 1) { pendingScn = { biome: name, variant, seed }; }
 
 // ───────────────────────── Jogador ─────────────────────────
 // Personagem: modelo riggado com dedos (tools/build_final.py). A animação é em camadas, uma instância ("rig") por jogador:
@@ -1624,7 +1631,7 @@ function clearWorld() {
   playerGroup.visible = true; $('fade').style.opacity = 0;
 }
 
-let campaignCell = null, campaignRemote = false, curBiome = 'desert', startBase = null, campSector = null;
+let campaignCell = null, campaignRemote = false, curBiome = 'desert', curVariant = 0, curSeed = 1, startBase = null, campSector = null;
 const lateSent = new Set();
 async function startMission(id, levelArg, opts = {}) {
   if (net.role === 'client') return;
@@ -1643,14 +1650,15 @@ async function startMission(id, levelArg, opts = {}) {
   clearWorld();
   const def = MISSIONS.find(m => m.id === id);
   curBiome = opts.biome || (def ? def.biome : 'desert');
-  applyBiome(curBiome);
+  curVariant = opts.variant ?? (opts.cell ? WL.hash2(...opts.cell.split(',').map(Number)) % 3 : Math.floor(Math.random() * 3)); curSeed = opts.seed ?? (opts.cell ? WL.hash2(...opts.cell.split(',').map(Number)) % 9973 + 1 : 1 + Math.floor(Math.random() * 9972));
+  applyBiome(curBiome, curVariant, curSeed);
   opLayout = null;
   if (id === 'operation') {
     opLayout = planOperation();
     const L = opLayout;
     buildTerrain(L.R, 130, [{ x: L.S.x, z: L.S.z, r: 10 }, { x: L.G.x, z: L.G.z, r: 12 }, { x: L.E.x, z: L.E.z, r: 22 }]);
   } else buildTerrain(opts.R || 95, opts.rocks || 45, [{ x: 0, z: 0, r: 10 }]);
-  const rockData = rocks.map(k => [r1(k.x), r1(k.z), r1(k.r), r1(k.y)]);
+  const rockData = rocks.map(k => [r1(k.x), r1(k.z), r1(k.r), r1(k.y), k.k]);
   kills = 0; killsBy = {}; respawnTimers = {};
   elapsed = 0;
   spawnTimer = 1;
@@ -1676,7 +1684,7 @@ async function startMission(id, levelArg, opts = {}) {
   mission.level = L;
   mission.livesLeft = mission.lives || 0;
   afterMissionBuilt(id);
-  startBase = { k: 'start', id, faction: curFaction, cell: campaignCell, remote: campaignRemote, sector: campSector, title: mission.title, relax, level: L, biome: curBiome, R: ARENA_R, rocks: rockData, par: mission.par };
+  startBase = { k: 'start', id, faction: curFaction, cell: campaignCell, remote: campaignRemote, sector: campSector, title: mission.title, relax, level: L, biome: curBiome, variant: curVariant, seed: curSeed, R: ARENA_R, rocks: rockData, par: mission.par };
   lateSent.clear(); roster.forEach(p => lateSent.add(p.id));
   if (net.role === 'host') net.all({ ...startBase, spawn, lives: mission.lives || 0, mods: [mods.hp, mods.count, mods.speed, mods.edmg, mods.elite] });
   state = 'playing'; uiOpen = false; keepAwake(true);
@@ -1950,7 +1958,7 @@ function renderCampCell(W) {
   const stackUnused = `<div class="stackbar" title="Humanos ${WL.pct2(sc.h)} · Insetos ${WL.pct2(sc.i)} · Robôs ${WL.pct2(sc.r)}"><i style="width:${sc.h / 100}%;background:${OWN.H.color}"></i><i style="width:${sc.i / 100}%;background:${OWN.I.color}"></i><i style="width:${sc.r / 100}%;background:${OWN.R.color}"></i></div>
     <div class="stack-leg"><span style="color:${OWN.H.color}">${WL.pct2(sc.h)}</span><span style="color:${OWN.I.color}">${WL.pct2(sc.i)}</span><span style="color:${OWN.R.color}">${WL.pct2(sc.r)}</span></div>`;
   const stage = WL.stageOf(sc), pressure = WL.underPressure(GEO.idx, W.sec, ckey(o));
-  const head = `<div class="stat-line"><b>Setor ${cellName(o)}</b><small style="color:${OWN[f].color}">${OWN[f].name} · ${BIOME_NAME[o.b]}${pressure && stage !== 'disputa' ? ' · <b style="color:#ff7a5a">sob ataque</b>' : ''}</small></div>
+  const head = `<div class="stat-line"><b>Setor ${cellName(o)}</b><small style="color:${OWN[f].color}">${OWN[f].name} · ${sceneryLabel(o)}${pressure && stage !== 'disputa' ? ' · <b style="color:#ff7a5a">sob ataque</b>' : ''}</small></div>
     <div id="${W.id}Lib">${barsHtml(sc, 0, trendOf(W, ckey(o)))}</div>`;
   if (sc.h >= WL.SCALE) { box.innerHTML = `${head}<small style="color:var(--dim)">${WL.underPressure(GEO.idx, W.sec, ckey(o)) ? 'Reivindicado, mas há inimigos por perto: eles resistem menos ao ataque deste setor.' : 'Protegido: está atrás do território dos humanos.'}</small>`; return; }
   if (W.viewOnly) { box.innerHTML = `${head}<small style="color:var(--dim)">${attackable(W, o) ? 'Pode ser atacado.' : 'Fora de alcance por enquanto.'}</small><button class="btn" id="mapGoOnline" style="margin-top:6px;padding:6px 14px;font-size:11px">Entrar para atacar</button>`; $('mapGoOnline').onclick = () => { if (!AUTH.user && AUTH.enabled) showAuth('', 'world'); else showTab('world'); }; return; }
@@ -2294,7 +2302,8 @@ function setFaction(f) {
   if (f === 'bots') loadBots().catch(() => {});
   renderAll();
 }
-const BIOME_NAME = { desert: 'Deserto', ice: 'Gelo', toxic: 'Pântano tóxico', volcanic: 'Vulcânico' };
+const BIOME_NAME = { desert: 'Região Sudeste', ice: 'Região Norte', toxic: 'Região Oeste', volcanic: 'Região Leste', plains: 'Região Central' };
+const sceneryLabel = o => { const reg = REGIONS[REGION_OF_BIOME[o.b]], v = reg ? reg.variants[WL.hash2(o.c, o.r) % reg.variants.length] : null; return v ? `${reg.name} · ${v.name}` : BIOME_NAME[o.b]; };
 const ENEMY_INFO_BOTS = [
   ['Soldado-lâmina', 'Veloz. Corre até você e golpeia com a espada.'], ['Atirador', 'Mantém distância e dispara rajadas de plasma.'],
   ['Pesado', 'Gigante com espadão. Cada golpe dói.'], ['Kamikaze', 'Corre até você e detona. Atire de longe.'],
@@ -2390,7 +2399,7 @@ function renderUrgent() {
   const card = ({ o, why }) => {
     const sc = W.sec.get(ckey(o)), ef = enemyOfCell(W, o), m = cellMission(W, o), min = sectorMin(W, o), L = Math.min(LEVEL_MAX, Math.max(min, save.campLevel || min));
     const gain = WL.missionGain(m.id, L), can = AUTH.user && net.connected && !isClient && !missionBusy();
-    return `<div class="urg" data-k="${ckey(o)}"><div class="stat-line"><b>Setor ${cellName(o)}</b><small style="color:${OWN[WL.dominant(sc)].color}">${why} · ${BIOME_NAME[o.b]}</small></div>
+    return `<div class="urg" data-k="${ckey(o)}"><div class="stat-line"><b>Setor ${cellName(o)}</b><small style="color:${OWN[WL.dominant(sc)].color}">${why} · ${sceneryLabel(o)}</small></div>
       <div class="stackbar"><i style="width:${sc.h / 100}%;background:${OWN.H.color}"></i><i style="width:${sc.i / 100}%;background:${OWN.I.color}"></i><i style="width:${sc.r / 100}%;background:${OWN.R.color}"></i></div>
       <div class="stack-leg"><span style="color:${OWN.H.color}">${WL.pct2(sc.h)}</span><span style="color:${OWN.I.color}">${WL.pct2(sc.i)}</span><span style="color:${OWN.R.color}">${WL.pct2(sc.r)}</span></div>
       <div class="mission-line"><b>${FT2(m.title, OWN[ef].fac)}</b> <small>· vitória +${WL.pct2(gain)}</small></div>
@@ -3676,7 +3685,7 @@ async function clientStartMission(d) {
   loadBots().catch(() => {});
   if (curFaction === 'bots') loadBots().catch(() => {});
   clearWorld();
-  applyBiome(d.biome);
+  applyBiome(d.biome, d.variant || 0, d.seed || 1);
   opLayout = null;
   buildTerrain(d.R, 0, [], d.rocks);
   kills = 0; elapsed = 0; shake = 0;
@@ -3831,6 +3840,7 @@ function loop() {
   frameNo++; tick(Math.min(0.05, (now - lastFrame) / 1000)); lastFrame = now;
   const want = !isTouch && (state === 'menu' || state === 'paused' || state === 'ended');
   if (want !== cursorOn) { cursorOn = want; window.__cursor && window.__cursor.show(want); }
+  if (scn) scn.update(0.016, camera, now / 1000);
   renderer.render(scene, camera);
 }
 
@@ -3879,9 +3889,12 @@ function tick(dt) {
     if (state === 'dying') { dyingT -= dt; if (dyingT <= 0) state = 'downed'; }
   } else {
     // Câmera lenta orbitando no menu
-    const a = performance.now() / 8000;
-    camera.position.set(Math.cos(a) * 30, 10, Math.sin(a) * 30);
-    camera.lookAt(0, 2, 0);
+    if (window.__photo) { camera.position.fromArray(window.__photo.pos); camera.lookAt(...window.__photo.look); if (window.__photo.fov) { camera.fov = window.__photo.fov; camera.updateProjectionMatrix(); } }
+    else {
+      const a = performance.now() / 8000;
+      camera.position.set(Math.cos(a) * 30, 10, Math.sin(a) * 30);
+      camera.lookAt(0, 2, 0);
+    }
   }
 }
 
@@ -3909,5 +3922,5 @@ window.__freedivers = window.__multipunk = {
   player, keys, tick, startMission, setFaction, settings, get curFaction() { return curFaction; }, loadBots, botsReady,
   get enemies() { return enemies; }, get state() { return state; }, get kills() { return kills; },
   get mission() { return mission; }, setMouse(v) { mouseDown = v; },
-  get camPos() { return camPos; }, get rocks() { return rocks; }, get generator() { return generator; }, get strikes() { return strikes; }, switchWeapon, callStrike, spawnEnemy, damageEnemy, get pods() { return pods; }, endMission, get save() { return save; }, get level() { return level; }, get mods() { return mods; }, addXp, get platoons() { return platoons; }, get plane() { return plane; }, get opLayout() { return opLayout; }, get stats() { return stats; }, get xpNeed() { return xpNeed; }, respawnPlayer, abortMission, computeScore, get checkpoint() { return checkpoint; }, get loadedVersion() { return net.version; }, checkVersion, get newVersion() { return newVersion; }, updateModalTick, net, others, get enemyById() { return enemyById; }, get crates() { return crates; }, get drops() { return drops; }, get turrets() { return turrets; }, get uiOpen() { return uiOpen; }, buildSnapshot, applySnapshot, killsBy: () => killsBy, set stateX(v) { state = v; }, get wts() { return wts; }, damage: n => damagePlayer(n), get beacons() { return beacons; }, get pad() { return pad; },
+  get scn() { return scn; }, setScenery(biome, variant = 0, seed = 1, R = 95) { applyBiome(biome, variant, seed); buildTerrain(R, 45, [{ x: 0, z: 0, r: 10 }]); }, set photo(v) { window.__photo = v; }, get camPos() { return camPos; }, get rocks() { return rocks; }, get generator() { return generator; }, get strikes() { return strikes; }, switchWeapon, callStrike, spawnEnemy, damageEnemy, get pods() { return pods; }, endMission, get save() { return save; }, get level() { return level; }, get mods() { return mods; }, addXp, get platoons() { return platoons; }, get plane() { return plane; }, get opLayout() { return opLayout; }, get stats() { return stats; }, get xpNeed() { return xpNeed; }, respawnPlayer, abortMission, computeScore, get checkpoint() { return checkpoint; }, get loadedVersion() { return net.version; }, checkVersion, get newVersion() { return newVersion; }, updateModalTick, net, others, get enemyById() { return enemyById; }, get crates() { return crates; }, get drops() { return drops; }, get turrets() { return turrets; }, get uiOpen() { return uiOpen; }, buildSnapshot, applySnapshot, killsBy: () => killsBy, set stateX(v) { state = v; }, get wts() { return wts; }, damage: n => damagePlayer(n), get beacons() { return beacons; }, get pad() { return pad; },
 };

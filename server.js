@@ -29,7 +29,7 @@ const types = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css',
   '.png': 'image/png', '.json': 'application/json', '.glb': 'model/gltf-binary', '.ico': 'image/x-icon', '.webp': 'image/webp', '.jpg': 'image/jpeg', '.webmanifest': 'application/manifest+json',
 };
-const allowed = p => /^\/(index\.html|main\.js|net\.js|cursor\.js|bots\.js|worldlogic\.mjs|favicon\.ico|sw\.js|manifest\.webmanifest)$/.test(p) || /^\/(lib|assets)\/[\w./-]+$/.test(p) || (DEV && /^\/tools\/[\w./-]+$/.test(p));
+const allowed = p => /^\/(index\.html|main\.js|net\.js|cursor\.js|bots\.js|worldlogic\.mjs|scenery\.js|scn_\w+\.js|favicon\.ico|sw\.js|manifest\.webmanifest)$/.test(p) || /^\/(lib|assets)\/[\w./-]+$/.test(p) || (DEV && /^\/tools\/[\w./-]+$/.test(p));
 const gzCache = new Map();
 const SEC_HEADERS = {
   'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer',
@@ -50,7 +50,7 @@ function sendFile(req, res, file) {
   });
 }
 // Versão = hash do conteúdo dos arquivos do jogo. Muda sozinha quando você atualiza o código na VPS.
-const APP_FILES = ['index.html', 'main.js', 'net.js', 'cursor.js', 'bots.js', 'worldlogic.mjs', 'assets/character.glb', 'assets/robot.glb', 'assets/spider.glb', 'assets/crawler.glb', 'assets/pusher.glb', 'assets/bomber.glb', 'assets/titan.glb', 'assets/world.json', 'assets/worldmap.jpg'];
+const APP_FILES = ['index.html', 'main.js', 'net.js', 'cursor.js', 'bots.js', 'worldlogic.mjs', 'scenery.js', 'scn_util.js', 'scn_props.js', 'scn_props2.js', 'scn_norte.js', 'scn_oeste.js', 'scn_sudeste.js', 'scn_leste.js', 'scn_central.js', 'assets/character.glb', 'assets/robot.glb', 'assets/spider.glb', 'assets/crawler.glb', 'assets/pusher.glb', 'assets/bomber.glb', 'assets/titan.glb', 'assets/world.json', 'assets/worldmap.jpg'];
 let verCache = { sig: '', hash: 'dev' };
 function appVersion() {
   let sig = '';
