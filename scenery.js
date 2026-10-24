@@ -168,6 +168,7 @@ function mistTexture() {
   gr.addColorStop(0, 'rgba(255,255,255,0.95)'); gr.addColorStop(0.45, 'rgba(255,255,255,0.45)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.fillRect(0, 0, S, S);
   mistTex = new THREE.CanvasTexture(c); mistTex.colorSpace = THREE.SRGBColorSpace; return mistTex;
 }
+const GROUND_AVG = { snow: 0xe9f0f8, ice: 0xbfe0ee, forest: 0x3f5a2a, stone: 0x6e6c5e, mud: 0x4b4a2c, sand: 0xdb8d52, rock: 0x7a5a46, basalt: 0x3a2c28, grass: 0x6f8f35, dirt: 0x8c6a40 };
 let lavaTex = null;
 function lavaTexture() {
   if (lavaTex) return lavaTex;
@@ -192,7 +193,7 @@ export function buildScenery(opts) {
   const updaters = [];
   if (touch) { solid.lod = 0.5; glow.lod = 0.5; }
   const ctx = { THREE, R, rnd, noise, touch, solid, glow, group, seed, Kit, terrainRing, lerpHex, smooth, add: m => { group.add(m); extra.push(m); return m; },
-    ring: cfg => { if (touch) { cfg = { ...cfg, nt: Math.round((cfg.nt || 140) * 0.62), nr: Math.round((cfg.nr || 46) * 0.75) }; } const m = new THREE.Mesh(terrainRing({ R0: R + 2, ...cfg }), solidMat()); m.receiveShadow = true; group.add(m); extra.push(m); return m; },
+    ring: cfg => { const gk = def.ground || {}, avg = new THREE.Color(GROUND_AVG[gk.kind] ?? 0x888888).multiply(new THREE.Color(gk.tint ?? 0xffffff)).getHex(), c0 = cfg.color; cfg = { ...cfg, color: (x, y, z, g, r) => lerpHex(c0(x, y, z, g, r), avg, (1 - smooth(R + 2, R + 30, r)) * 0.85) }; if (touch) { cfg = { ...cfg, nt: Math.round((cfg.nt || 140) * 0.62), nr: Math.round((cfg.nr || 46) * 0.75) }; } const m = new THREE.Mesh(terrainRing({ R0: R + 2, ...cfg }), solidMat()); m.receiveShadow = true; group.add(m); extra.push(m); return m; },
     water: (y, color, opacity = 0.82, rough = 0.18, rad = 520) => { const m = new THREE.Mesh(new THREE.CircleGeometry(rad, 48), new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: 0.25, transparent: opacity < 1, opacity })); m.rotation.x = -Math.PI / 2; m.position.y = y; group.add(m); extra.push(m); return m; },
     // faixas de névoa/poeira/fumaça rente ao chão (planos suaves translúcidos)
     mist: (n, r0, r1, y0, y1, size, color, opacity = 0.35) => {

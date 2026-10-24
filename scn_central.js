@@ -101,7 +101,7 @@ const torre = {
   build(ctx) {
     const { R, noise, rnd, solid, glow } = ctx, tx = Math.cos(0.5) * (R + 90), tz = Math.sin(0.5) * (R + 90);
     const hfn = plainsHeight(ctx, { river: false, add: (x, z, r) => { const d = Math.hypot(x - tx, z - tz); return (1 - smooth(14, 56, d)) * (30 + 8 * noise.fbm(x * 0.05, z * 0.05, 2)); } });
-    ctx.ring({ R1: 700, nr: 60, nt: 190, height: hfn, color: (x, y, z, g, r) => { const d = Math.hypot(x - tx, z - tz); return lerpHex(grassColor(x, y, z, g, r, ctx), lerpHex(0x7a766a, 0x5a564c, noise.fbm(x * 0.09, z * 0.09, 2)), smooth(0.9, 0.3, d / 60) * 0.85 * (y > 8 ? 1 : 0)); } });
+    ctx.ring({ R1: 700, nr: 60, nt: 190, height: hfn, color: (x, y, z, g, r) => { const d = Math.hypot(x - tx, z - tz); return lerpHex(grassColor(x, y, z, g, r, ctx), lerpHex(0x9a937f, 0x74705f, noise.fbm(x * 0.09, z * 0.09, 2)), smooth(0.9, 0.3, d / 60) * 0.8 * smooth(4, 14, y)); } });
     oaks(ctx, hfn, ctx.touch ? 34 : 70, R + 6, R + 260, 10, 20);
     tufts(ctx, hfn, ctx.touch ? 60 : 150, R + 2, R + 100);
     boulders(ctx, hfn, ctx.touch ? 14 : 26, R + 4, R + 70, 2.4, 6);
