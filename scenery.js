@@ -35,6 +35,11 @@ export function makeNoise(seed) {
 }
 
 // ───────────── Kit: geometria colorida sem normais (o material usa flatShading) ─────────────
+const ICO = {};
+function icoPositions(detail) {                       // icosaedro unitário já sem índices (calculado uma vez por nível de detalhe)
+  if (!ICO[detail]) { let g = new THREE.IcosahedronGeometry(1, detail); if (g.index) g = g.toNonIndexed(); ICO[detail] = g.attributes.position; }
+  return ICO[detail];
+}
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _v = new THREE.Vector3(), _s = new THREE.Vector3(), _p = new THREE.Vector3();
 export class Kit {
   constructor(rnd) { this.p = []; this.c = []; this.rnd = rnd || Math.random; this.lod = 1; }   // lod < 1 (celular): peças pulam detalhes miúdos
@@ -65,7 +70,7 @@ export class Kit {
   }
   // rocha irregular (icosaedro deformado); sq achata, sy estica
   rock(r, col, o = {}, detail = 0, jit = 0.18, rough = 0.28) {
-    const g = new THREE.IcosahedronGeometry(1, detail).toNonIndexed(), pos = g.attributes.position, cache = new Map();
+    const pos = icoPositions(detail), cache = new Map();
     const disp = (x, y, z) => { const k = `${x.toFixed(3)},${y.toFixed(3)},${z.toFixed(3)}`; let d = cache.get(k); if (d === undefined) { d = 1 + (this.rnd() - 0.5) * rough * 2; cache.set(k, d); } return d; };
     const M = this._mat({ ...o, s: undefined, sx: (o.sx ?? o.s ?? 1) * r, sy: (o.sy ?? o.s ?? 1) * r, sz: (o.sz ?? o.s ?? 1) * r });
     for (let i = 0; i < pos.count; i += 3) {
