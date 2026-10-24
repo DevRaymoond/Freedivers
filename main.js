@@ -1850,7 +1850,10 @@ function bindMapInput(W) {
   const cv = $(W.id + 'Cv'); if (!cv) return;
   const ptrs = new Map(); let drag = null, pinch = 0, moved = false;
   const local = e => { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
-  cv.onwheel = e => { e.preventDefault(); const [x, y] = local(e); zoomAt(W, cv, x, y, e.deltaY < 0 ? 1.2 : 1 / 1.2); };
+  // a roda é do mapa: sempre cancelada (mesmo no zoom mínimo ou na borda), para a página não rolar junto
+  cv.onwheel = null;
+  if (!cv._wheel) { cv._wheel = e => { e.preventDefault(); e.stopPropagation(); const [x, y] = local(e); zoomAt(W, cv, x, y, e.deltaY < 0 ? 1.2 : 1 / 1.2); }; cv.addEventListener('wheel', cv._wheel, { passive: false }); }
+  if (!cv._tm) { cv._tm = e => { if (e.cancelable) e.preventDefault(); }; cv.addEventListener('touchmove', cv._tm, { passive: false }); }
   cv.onpointerdown = e => {
     cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, local(e)); moved = false;
     if (ptrs.size === 1) { const { v } = mapMetrics(W, cv); drag = { x: e.clientX, y: e.clientY, vx: v.x, vy: v.y }; }

@@ -78,3 +78,8 @@
 - Novos cenários baseados nas referências: 5 regiões × 3 variantes (Norte, Oeste, Sudeste, Leste e Central), gerados por código (`scenery.js`, `scn_*.js`): montanhas e terraços nevados, posto avançado com torres e rampa, vale congelado com paredão de colunas e cortinas de gelo; selva densa com paredões e cachoeiras, arcadas em ruínas, pântano com passarelas e torres; dunas com mesas e derricks, cidade abandonada, cratera em estratos; campos de lava com colunas de basalto e veios brilhantes, fortaleza e zona de extração; campos, vilarejo e torre de vigilância.
 - Céu em shader (gradiente, sol, nuvens), névoa por cenário, tom de cinema (ACES), chão procedural por região, detalhes no chão da arena e obstáculos que mudam por variante. O mapa-múndi ganhou a região Central (`plains`) e os setores mostram região e cenário.
 - Rede: `variant` e `seed` seguem na mensagem de início; as rochas levam o formato (`k`). Celular: menos detalhe nas peças, terreno em resolução menor e menos objetos.
+
+## 2026-10-24 (layout mobile-first)
+- CSS reescrito mobile-first: a base é celular (topbar em duas linhas com abas roláveis, painéis em coluna, mapa quadrado) e as telas maiores só acrescentam (701px, 901px e 1101px). Os valores do desktop acima de 1101px são os mesmos de antes.
+- Web: a página cabe na tela sem rolar, com 5% de recuo das bordas; o mapa ocupa o espaço disponível.
+- Mapa: a roda do mouse fica sempre dentro do mapa (mesmo no zoom mínimo ou na borda), sem rolar a página; o gesto de arrastar no toque também não rola.
