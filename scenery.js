@@ -28,7 +28,7 @@ export function makeNoise(seed) {
     const a = h(ix, iz), b = h(ix + 1, iz), c = h(ix, iz + 1), d = h(ix + 1, iz + 1);
     return a + (b - a) * ux + (c - a) * uz + (a - b - c + d) * ux * uz;
   };
-  const fbm = (x, z, o = 4) => { let s = 0, a = 0.5, f = 1; for (let i = 0; i < o; i++) { s += a * n2(x * f, z * f); f *= 2.03; a *= 0.5; } return s / (1 - Math.pow(0.5, o)) * 0.5 + 0.0; };
+  const fbm = (x, z, o = 4) => { let s = 0, a = 0.5, f = 1; for (let i = 0; i < o; i++) { s += a * n2(x * f, z * f); f *= 2.03; a *= 0.5; } return s / (1 - Math.pow(0.5, o)); };         // 0..1 (média ~0,5)
   const ridge = (x, z, o = 4) => { let s = 0, a = 0.5, f = 1; for (let i = 0; i < o; i++) { const v = 1 - Math.abs(2 * n2(x * f, z * f) - 1); s += a * v * v; f *= 2.1; a *= 0.5; } return s; };
   return { n2, fbm, ridge };
 }

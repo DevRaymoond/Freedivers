@@ -1,7 +1,7 @@
 // Região Sudeste: dunas e cânions, cidade abandonada e cratera gigante.
 import { lerpHex, smooth } from './scn_util.js';
 import { C, building, container, bridge, lamp, radioTower } from './scn_props.js';
-import { derrick, mesa, tank, banner, arch, wall, smokestack, crane } from './scn_props2.js';
+import { derrick, mesa, tank, banner, arch, wall, smokestack, crane, cliffRing } from './scn_props2.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const SKY = { top: 0x4a7fc0, horizon: 0xf3c9a0, sunDir: [0.6, 0.4, 0.4], sunCol: 0xffe2b0, cover: 0.28, haze: 0.72, cloudCol: 0xfff0e0, cloudShade: 0xe0a67c };
@@ -86,20 +86,19 @@ const cratera = {
   name: 'Cratera Gigante', sky: { ...SKY, haze: 0.8, cover: 0.3, top: 0x5a86bf }, env: { ...ENV, near: 100, far: 640, fogColor: 0xd8b08a }, ground: { kind: 'rock', tint: 0xffffff }, obstacle,
   build(ctx) {
     const { R, noise, rnd, solid, glow } = ctx;
-    // bacia: piso plano até a borda, paredão em degraus de estratos (R+150..R+230) e planície depois
-    const hfn = (x, z, r) => {
-      const wall = smooth(R + 125, R + 215, r), jag = noise.fbm(x * 0.02, z * 0.02, 3), top = 90 + 25 * jag, h0 = wall * top, step = 11, f = h0 / step, st = (Math.floor(f) + smooth(0.55, 0.92, f - Math.floor(f))) * step;
-      return lerp(h0, st, 0.85) * (1 - smooth(R + 330, R + 560, r) * 0.55) + smooth(R + 230, R + 520, r) * noise.ridge(x * 0.006, z * 0.006, 3) * 40 + smooth(R + 3, R + 40, r) * 1.2 * noise.fbm(x * 0.05, z * 0.05, 2);
-    };
-    ctx.ring({ R1: 640, nr: 60, nt: 180, height: hfn, color: (x, y, z, g, r) => { const strat = 0.5 + 0.5 * Math.sin(y * 0.55 + noise.fbm(x * 0.02, z * 0.02, 2) * 6); const rock = lerpHex(lerpHex(0x8a5a40, 0xb87a56, strat), 0x4a2a20, 0.25 * noise.fbm(x * 0.06, z * 0.06, 2) * 2); return lerpHex(sandColor(x, y, z, g, r, ctx), rock, smooth(0.5, 1.2, g) * smooth(0, 12, y) + smooth(0, 25, y) * 0.5); } });
-    // anel de torres e arcos formando o "coliseu" ao redor da arena
+    const hfn = (x, z, r) => smooth(R + 3, R + 60, r) * 3 * noise.fbm(x * 0.05, z * 0.05, 2) + smooth(R + 110, R + 200, r) * (52 + 14 * noise.fbm(x * 0.012, z * 0.012, 3)) + smooth(R + 260, R + 540, r) * noise.ridge(x * 0.006, z * 0.006, 3) * 55;
+    ctx.ring({ R1: 640, nr: 60, nt: 180, height: hfn, color: (x, y, z, g, r) => { const strat = 0.5 + 0.5 * Math.sin(y * 0.55 + noise.fbm(x * 0.02, z * 0.02, 2) * 6); return lerpHex(sandColor(x, y, z, g, r, ctx), lerpHex(0x9a6648, 0xc88a5c, strat), smooth(8, 40, y)); } });
+    // paredão da cratera em colunas estratificadas (vermelho, laranja, areia) com capa de poeira
+    cliffRing(ctx, { r0: R + 112, r1: R + 138, hmin: 48, hmax: 96, wmin: 22, wmax: 36, cols: [0x7a3a26, 0xd88a58], cap: 0xe0b078, capH: 2.6, sides: 7, noise, y0: -3, hfn: () => 0 });
+    cliffRing(ctx, { r0: R + 150, r1: R + 190, hmin: 70, hmax: 130, wmin: 28, wmax: 46, cols: [0x84432a, 0xe29a66], cap: 0xe8bd88, capH: 3, sides: 7, noise, y0: -3, hfn: () => 0 });
+    // coliseu ao redor da arena: torres com lanternas, pontes de aço em anel, colunas
     const n = 14, ringR = R + 38;
     for (let i = 0; i < n; i++) { const a = i / n * 6.28, x = Math.cos(a) * ringR, z = Math.sin(a) * ringR; building(solid, glow, x, z, 9, 9, 24 + (i % 3) * 6, { y: 0, ry: -a, wall: 0x6a5648, trim: 0xc08030, taper: 0.9, glowWin: false }); solid.box(5, 6, 5, METAL, { x, y: 24 + (i % 3) * 6, z, ry: -a }, 0.7, 0.7, 0.1); glow.box(1.2, 1.2, 1.2, 0xffa040, { x, y: 31 + (i % 3) * 6, z }, 1, 1, 0); }
     for (let i = 0; i < n; i++) { const a0 = i / n * 6.28, a1 = (i + 1) / n * 6.28; bridge(solid, Math.cos(a0) * ringR, Math.sin(a0) * ringR, Math.cos(a1) * ringR, Math.sin(a1) * ringR, 14, 5, { deck: 0x4a4038, rail: 0xc08030, y0: 0, pillars: 1 }); }
     for (let i = 0; i < 26; i++) { const a = i / 26 * 6.28 + 0.1, r = R + 70 + (i % 2) * 22, x = Math.cos(a) * r, z = Math.sin(a) * r; solid.cyl(1.6, 1.3, 14 + (i % 3) * 5, 8, 0x7a6a58, { x, y: 0, z }, 0.18); }
-    for (let i = 0; i < 8; i++) { const a = rnd() * 6.28, r = R + 90 + rnd() * 25, x = Math.cos(a) * r, z = Math.sin(a) * r; derrick(solid, glow, x, z, 26 + rnd() * 14, 0, METAL); }
+    for (let i = 0; i < 8; i++) { const a = rnd() * 6.28, r = R + 90 + rnd() * 18, x = Math.cos(a) * r, z = Math.sin(a) * r; derrick(solid, glow, x, z, 26 + rnd() * 14, 0, METAL); }
     scatterMesas(ctx, hfn, ctx.touch ? 8 : 16, R + 280, R + 520, 20, 70);
-    scatterRubble(ctx, hfn, ctx.touch ? 30 : 70, R + 4, R + 110);
+    scatterRubble(ctx, hfn, ctx.touch ? 30 : 70, R + 4, R + 108);
     return {};
   },
 };
