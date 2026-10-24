@@ -123,6 +123,20 @@ botão **FOGO** grande (segure e arraste para mirar atirando) e botões DASH, RE
 - Pontuação (baixa de propósito): missão, tempo, abates, precisão e nível; perde por mortes, suprimentos e orbitais. Rank D–S. A pontuação é da equipe; os créditos são individuais.
 - Melhorias permanentes (+1 de dano, +5 de vida…): 500 créditos + 250 por nível.
 
+## Cenários (regiões e variantes)
+O mapa-múndi tem 5 regiões, cada uma com 3 cenários. O setor escolhe a variante pelo próprio quadrado (`hash2(c, r) % 3`) e a semente do cenário também vem dele, então todos os jogadores veem o mesmo lugar; na Partida livre a variante é sorteada.
+
+| Região | Bioma no mapa | Cenários |
+|---|---|---|
+| Norte | gelo | Montanhas Nevadas · Posto Avançado · Vale Congelado |
+| Oeste | verde | Floresta Densa · Ruínas Antigas · Rio e Pântano |
+| Sudeste | deserto | Dunas e Cânions · Cidade Abandonada · Cratera Gigante |
+| Leste | vulcânico | Campos de Lava · Fortaleza Corrompida · Zona de Extração |
+| Central | planícies | Campos Abertos · Vilarejo · Torre de Vigilância |
+
+Tudo é gerado por código, em low-poly facetado (sem texturas pesadas): `scenery.js` (núcleo: kit de geometria colorida, anel de terreno, céu com sol e nuvens em shader, chão procedural, névoa/poeira, lava), `scn_props.js` e `scn_props2.js` (peças: pinheiros, picos, torres, prédios, pontes, arcos, casas, moinhos, derricks, muralhas, colunas de falésia…) e um arquivo por região (`scn_norte.js`, `scn_oeste.js`, `scn_sudeste.js`, `scn_leste.js`, `scn_central.js`). Os obstáculos da arena (rochas, blocos, contêineres…) também mudam por variante. No celular as peças usam menos detalhe (`lod`), menos objetos e menos resolução do terreno; o tom do filme (ACES) dá o contraste.
+Para ver um cenário isolado no navegador (modo foto, só para desenvolvimento): `__freedivers.setScenery('ice', 1, 7, 95)` (bioma, variante, semente, raio) e `__freedivers.photo = { pos: [x, y, z], look: [x, y, z], fov: 70 }`.
+
 ## Rainha da colmeia (insetos)
 A Rainha é o gigante de 6 pernas (~9 m, uns 4x o jogador): **anda devagar**, **ataca pisando** (área à frente, impacto no meio da animação, dá para sair correndo), **cospe um jato de ácido** (gotas em arco
 que miram devagar: andar de lado desvia) e **convoca o enxame** de tempos em tempos. Aparece só na missão Rainha da colmeia, com a barra de vida do chefe. Com robôs, o chefe continua sendo o Comandante Mecha.

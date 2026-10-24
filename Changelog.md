@@ -73,3 +73,8 @@
 ## 2026-10-23 (bombardeiro novo e modelos otimizados)
 - **Bombardeiro** (inseto explosivo) passa a usar a formiga nova (`assets/bomber.glb`), rigada por `tools/build_mob.py`: 6 pernas em trípode, abdômen brilhante e ações `Idle`, `Walk` e `Swell` (agacha, treme e incha o abdômen quando chega a 7 m do alvo; estado `wind` na rede). Com robôs continua o modelo antigo.
 - **Modelos otimizados** sem perda visível: vértices soldados, normais removidas (o jogo usa `flatShading`) e posições quantizadas (`tools/optimize/optimize_glb.mjs`). Aranha, corredor, empurrador, Rainha e bombardeiro: de ~9 MB para ~3,4 MB no total. Desvio máximo medido nas animações: 0,05% do tamanho do modelo.
+
+## 2026-10-24 (cenários por região)
+- Novos cenários baseados nas referências: 5 regiões × 3 variantes (Norte, Oeste, Sudeste, Leste e Central), gerados por código (`scenery.js`, `scn_*.js`): montanhas e terraços nevados, posto avançado com torres e rampa, vale congelado com paredão de colunas e cortinas de gelo; selva densa com paredões e cachoeiras, arcadas em ruínas, pântano com passarelas e torres; dunas com mesas e derricks, cidade abandonada, cratera em estratos; campos de lava com colunas de basalto e veios brilhantes, fortaleza e zona de extração; campos, vilarejo e torre de vigilância.
+- Céu em shader (gradiente, sol, nuvens), névoa por cenário, tom de cinema (ACES), chão procedural por região, detalhes no chão da arena e obstáculos que mudam por variante. O mapa-múndi ganhou a região Central (`plains`) e os setores mostram região e cenário.
+- Rede: `variant` e `seed` seguem na mensagem de início; as rochas levam o formato (`k`). Celular: menos detalhe nas peças, terreno em resolução menor e menos objetos.

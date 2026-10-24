@@ -1,12 +1,12 @@
 // Região Leste: campos de lava, fortaleza corrompida e zona de extração.
 import { lerpHex, smooth } from './scn_util.js';
 import { C, peak, building, bridge, lamp, radioTower } from './scn_props.js';
-import { derrick, tank, smokestack, wall, conveyor, crane, banner, brazier, mesa } from './scn_props2.js';
+import { derrick, tank, smokestack, wall, conveyor, crane, banner, brazier, mesa, cliffRing } from './scn_props2.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const SKY = { top: 0x1c0a0e, horizon: 0xe0561e, sunDir: [-0.5, 0.18, 0.5], sunCol: 0xff8a3a, cover: 0.78, haze: 0.62, cloudCol: 0x6a2a20, cloudShade: 0x1a0a0a, sunSize: 200 };
-const ENV = { fogColor: 0x7a2814, near: 70, far: 520, camFar: 640, hemi: [0xff9a68, 0x4a2014, 1.15], exposure: 1.3, sun: [0xff8a4a, 1.45, [-50, 40, 30]] };
-const BASALT = 0x2a2220, BASALT_L = 0x4a3a34, OBS = 0x1a1618, METAL = 0x2d2b2e;
+const ENV = { fogColor: 0x7a2814, near: 70, far: 520, camFar: 640, hemi: [0xffa878, 0x7a3418, 1.7], exposure: 1.38, sun: [0xff8a4a, 1.45, [-50, 40, 30]] };
+const BASALT = 0x3a2e2a, BASALT_L = 0x6a5046, OBS = 0x2a2224, METAL = 0x3d3a3e;
 
 // terreno: platôs de basalto com canais de lava; moat = fosso em volta da arena (R+8..R+30)
 function lavaHeight(ctx, o = {}) {
@@ -45,17 +45,29 @@ function bridgesOverMoat(ctx, n, y = 1.2) {
   const { R, solid, glow } = ctx;
   for (let i = 0; i < n; i++) { const a = i / n * 6.28 + 0.4, x0 = Math.cos(a) * (R + 3), z0 = Math.sin(a) * (R + 3), x1 = Math.cos(a) * (R + 36), z1 = Math.sin(a) * (R + 36); bridge(solid, x0, z0, x1, z1, y, 6, { deck: METAL, rail: 0xc04a1a, y0: -6, pillars: 2 }); glow.box(0.5, 0.5, 0.5, 0xff9a3a, { x: x1, y: y + 1.4, z: z1 }, 1, 1, 0); glow.box(0.5, 0.5, 0.5, 0xff9a3a, { x: x0, y: y + 1.4, z: z0 }, 1, 1, 0); }
 }
-function groundSteam(ctx) {}
+// blocos de basalto empilhados (platôs em degraus) com veios e quedas de lava brilhantes
+function lavaColumns(ctx, r0, r1, hmin, hmax, o = {}) {
+  const { rnd, noise, glow } = ctx;
+  cliffRing(ctx, { r0, r1, hmin, hmax, wmin: o.wmin ?? 14, wmax: o.wmax ?? 26, cols: [0x2a201e, 0x6a5148], cap: null, sides: 6, noise, y0: o.y0 ?? -6, hfn: () => 0, skip: o.skip,
+    onColumn: (x, z, y, h, w, a) => {
+      const dx = -Math.cos(a), dz = -Math.sin(a), ry = Math.atan2(dx, dz);
+      for (let k = 0; k < 3; k++) { const aa = a + Math.PI + (rnd() - 0.5) * 1.6, px = x + Math.cos(aa) * w * 0.78, pz = z + Math.sin(aa) * w * 0.78; glow.box(0.5 + rnd() * 0.5, h * (0.3 + rnd() * 0.5), 0.3, rnd() < 0.5 ? 0xff7a1e : 0xe2480f, { x: px, y: y + h * rnd() * 0.4, z: pz, ry: Math.atan2(Math.cos(aa), Math.sin(aa)) }, 1, 1, 0.1); }
+      if (rnd() < (o.fall ?? 0.3)) glow.box(3 + rnd() * 5, h * 0.85, 0.8, 0xff6a1a, { x: x + dx * w * 0.8, y: y + h * 0.1, z: z + dz * w * 0.8, ry }, 0.9, 1, 0.15);
+      if (rnd() < 0.35) glow.box(w * 0.7, 0.25, w * 0.7, 0xff8a2a, { x, y: y + h - 0.1, z }, 1, 1, 0.2);   // brasas no topo
+    } });
+}
 
 const campos = {
-  name: 'Campos de Lava', sky: SKY, env: ENV, ground: { kind: 'basalt', tint: 0xffffff }, obstacle,
+  name: 'Campos de Lava', clutter: 'basalt', sky: SKY, env: ENV, ground: { kind: 'basalt', tint: 0xffffff }, obstacle,
   build(ctx) {
+    ctx.mist(16, ctx.R + 20, ctx.R + 220, -1, 10, 120, 0xff7a40, 0.22);
     const { R, rnd, solid, glow } = ctx, hfn = lavaHeight(ctx);
     ctx.lava(-2.2);
     ctx.ring({ R1: 620, nr: 60, nt: 180, height: hfn, color: (x, y, z, g, r) => basaltColor(x, y, z, g, r, ctx) });
-    spires(ctx, hfn, ctx.touch ? 22 : 46, R + 40, R + 460, 25, 130);
-    lavaFalls(ctx, hfn, 18, R + 40, R + 260);
-    bridgesOverMoat(ctx, 4, 0.9);
+    spires(ctx, hfn, ctx.touch ? 20 : 40, R + 140, R + 460, 25, 130);
+    lavaColumns(ctx, R + 44, R + 70, 10, 34, { y0: -5 });
+    lavaColumns(ctx, R + 96, R + 130, 22, 62, { y0: -6, wmin: 20, wmax: 34, fall: 0.5 });
+    bridgesOverMoat(ctx, 5, 0.9);
     // torres de vigia, antenas e postes sobre os platôs
     for (let i = 0; i < 12; i++) { const a = rnd() * 6.28, r = R + 50 + rnd() * 190, x = Math.cos(a) * r, z = Math.sin(a) * r, y = hfn(x, z, r); if (y < 4) continue; building(solid, glow, x, z, 7 + rnd() * 5, 7 + rnd() * 5, 8 + rnd() * 12, { y, wall: 0x34302f, trim: 0xc04a1a, roof: 0x241f20, win: 0xff9a3a, taper: 0.88 }); if (i % 2) radioTower(solid, glow, x + 6, z, 30 + rnd() * 20, y, METAL); }
     for (let i = 0; i < 16; i++) { const a = rnd() * 6.28, r = R + 8 + rnd() * 24, x = Math.cos(a) * r, z = Math.sin(a) * r; if (hfn(x, z, r) < -2) continue; brazier(solid, glow, x, z, hfn(x, z, r), 1.2); }
@@ -64,14 +76,15 @@ const campos = {
 };
 
 const fortaleza = {
-  name: 'Fortaleza Corrompida', sky: SKY, env: { ...ENV, fogColor: 0x6a2416 }, ground: { kind: 'basalt', tint: 0xffffff }, obstacle,
+  name: 'Fortaleza Corrompida', clutter: 'basalt', sky: SKY, env: { ...ENV, fogColor: 0x6a2416 }, ground: { kind: 'basalt', tint: 0xffffff }, obstacle,
   build(ctx) {
+    ctx.mist(14, ctx.R + 20, ctx.R + 220, -1, 10, 120, 0xff7a40, 0.22);
     const { R, rnd, solid, glow } = ctx, hfn = lavaHeight(ctx, { moat: 22 });
     ctx.lava(-2.2);
     ctx.ring({ R1: 620, nr: 60, nt: 180, height: hfn, color: (x, y, z, g, r) => basaltColor(x, y, z, g, r, ctx) });
-    spires(ctx, hfn, ctx.touch ? 14 : 30, R + 60, R + 460, 25, 120);
-    lavaFalls(ctx, hfn, 12, R + 40, R + 260);
-    bridgesOverMoat(ctx, 2, 0.9);
+    spires(ctx, hfn, ctx.touch ? 12 : 26, R + 150, R + 460, 25, 120);
+    lavaColumns(ctx, R + 100, R + 140, 22, 58, { y0: -6, wmin: 20, wmax: 34, fall: 0.5, skip: a => Math.abs(Math.atan2(Math.sin(a - 2.6), Math.cos(a - 2.6))) < 0.5 });
+    bridgesOverMoat(ctx, 3, 0.9);
     // muralhas com ameias, portão e torres de canto com pináculos; keep central alto com fenda brilhante
     const wr = R + 58, wn = 12, WALL = 0x2a2426, TRIM = 0x6a2418;
     for (let i = 0; i < wn; i++) { const a0 = i / wn * 6.28, a1 = (i + 1) / wn * 6.28, x0 = Math.cos(a0) * wr, z0 = Math.sin(a0) * wr, x1 = Math.cos(a1) * wr, z1 = Math.sin(a1) * wr; if (hfn(x0, z0, wr) < 2) continue; wall(solid, x0, z0, x1, z1, 16, 4, WALL, hfn(x0, z0, wr) - 0.5); }
@@ -86,16 +99,18 @@ const fortaleza = {
 };
 
 const extracao = {
-  name: 'Zona de Extração', sky: SKY, env: { ...ENV, fogColor: 0x7a2c14 }, ground: { kind: 'basalt', tint: 0xffffff }, obstacle,
+  name: 'Zona de Extração', clutter: 'basalt', sky: SKY, env: { ...ENV, fogColor: 0x7a2c14 }, ground: { kind: 'basalt', tint: 0xffffff }, obstacle,
   build(ctx) {
+    ctx.mist(14, ctx.R + 20, ctx.R + 220, -1, 10, 120, 0xff8a50, 0.22);
     const { R, rnd, solid, glow } = ctx, hfn = lavaHeight(ctx, { moat: 18, moatAmt: 0.7 });
     ctx.lava(-2.2);
     ctx.ring({ R1: 620, nr: 60, nt: 180, height: hfn, color: (x, y, z, g, r) => basaltColor(x, y, z, g, r, ctx) });
-    spires(ctx, hfn, ctx.touch ? 10 : 22, R + 80, R + 460, 25, 110);
-    lavaFalls(ctx, hfn, 12, R + 40, R + 240);
+    spires(ctx, hfn, ctx.touch ? 10 : 20, R + 160, R + 460, 25, 110);
+    lavaColumns(ctx, R + 60, R + 90, 12, 34, { y0: -5, fall: 0.4 });
+    lavaColumns(ctx, R + 150, R + 190, 28, 70, { y0: -6, wmin: 22, wmax: 36, fall: 0.5 });
     bridgesOverMoat(ctx, 4, 0.9);
     // complexo industrial: derricks, guindastes, esteiras, chaminés, tanques, galpões com janelas âmbar, lanternas
-    for (let i = 0; i < 12; i++) { const a = rnd() * 6.28, r = R + 40 + rnd() * 150, x = Math.cos(a) * r, z = Math.sin(a) * r, y = hfn(x, z, r); if (y < 3) continue; derrick(solid, glow, x, z, 30 + rnd() * 34, y, METAL); }
+    for (let i = 0; i < (ctx.touch ? 6 : 12); i++) { const a = rnd() * 6.28, r = R + 40 + rnd() * 150, x = Math.cos(a) * r, z = Math.sin(a) * r, y = hfn(x, z, r); if (y < 3) continue; derrick(solid, glow, x, z, 30 + rnd() * 34, y, METAL); }
     for (let i = 0; i < 8; i++) { const a = rnd() * 6.28, r = R + 40 + rnd() * 140, x = Math.cos(a) * r, z = Math.sin(a) * r, y = hfn(x, z, r); if (y < 3) continue; crane(solid, glow, x, z, 28 + rnd() * 14, y, rnd() * 6.28, 0xb87a1c); }
     for (let i = 0; i < 6; i++) { const a = rnd() * 6.28, r = R + 50 + rnd() * 120, x = Math.cos(a) * r, z = Math.sin(a) * r, y = hfn(x, z, r); if (y < 3) continue; smokestack(solid, glow, x, z, 34 + rnd() * 20, 3.2, y, 0x3a3234); tank(solid, x + 12, z + 6, 5.5, 11, 0x4a4244, y); }
     for (let i = 0; i < 16; i++) { const a = rnd() * 6.28, r = R + 40 + rnd() * 150, x = Math.cos(a) * r, z = Math.sin(a) * r, y = hfn(x, z, r); if (y < 3) continue; building(solid, glow, x, z, 14 + rnd() * 14, 10 + rnd() * 10, 8 + rnd() * 10, { y, ry: rnd() * 6, wall: 0x3a3436, trim: 0xc87a1c, roof: 0x222022, win: 0xffb050, taper: 0.9 }); }

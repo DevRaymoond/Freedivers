@@ -38,8 +38,9 @@ function duneHeight(ctx, o = {}) {
 }
 
 const dunas = {
-  name: 'Dunas e Cânions', sky: SKY, env: ENV, ground: { kind: 'sand', tint: 0xffffff }, obstacle,
+  name: 'Dunas e Cânions', clutter: 'sand', sky: SKY, env: ENV, ground: { kind: 'sand', tint: 0xffffff }, obstacle,
   build(ctx) {
+    ctx.mist(12, ctx.R + 40, ctx.R + 300, 2, 14, 130, 0xf0d0a8, 0.3);
     const { R, rnd, solid, glow } = ctx, hfn = duneHeight(ctx);
     ctx.ring({ R1: 620, nr: 56, nt: 170, height: hfn, color: (x, y, z, g, r) => sandColor(x, y, z, g, r, ctx) });
     scatterMesas(ctx, hfn, ctx.touch ? 16 : 30, R + 60, R + 420, 25, 95);
@@ -57,8 +58,9 @@ const dunas = {
 };
 
 const cidade = {
-  name: 'Cidade Abandonada', sky: { ...SKY, haze: 0.8, cover: 0.34 }, env: { ...ENV, near: 90, far: 620 }, ground: { kind: 'sand', tint: 0xf2d2b0 }, obstacle,
+  name: 'Cidade Abandonada', clutter: 'sand', sky: { ...SKY, haze: 0.8, cover: 0.34 }, env: { ...ENV, near: 90, far: 620 }, ground: { kind: 'sand', tint: 0xf2d2b0 }, obstacle,
   build(ctx) {
+    ctx.mist(14, ctx.R + 20, ctx.R + 200, 2, 16, 120, 0xe8c49a, 0.36);
     const { R, rnd, solid, glow } = ctx, hfn = duneHeight(ctx, { amp: 50 });
     ctx.ring({ R1: 620, nr: 56, nt: 170, height: hfn, color: (x, y, z, g, r) => sandColor(x, y, z, g, r, ctx) });
     scatterMesas(ctx, hfn, ctx.touch ? 8 : 16, R + 230, R + 460, 30, 90, 18, 40);
@@ -83,8 +85,9 @@ const cidade = {
 };
 
 const cratera = {
-  name: 'Cratera Gigante', sky: { ...SKY, haze: 0.8, cover: 0.3, top: 0x5a86bf }, env: { ...ENV, near: 100, far: 640, fogColor: 0xd8b08a }, ground: { kind: 'rock', tint: 0xffffff }, obstacle,
+  name: 'Cratera Gigante', clutter: 'sand', sky: { ...SKY, haze: 0.8, cover: 0.3, top: 0x5a86bf }, env: { ...ENV, near: 100, far: 640, fogColor: 0xd8b08a }, ground: { kind: 'rock', tint: 0xffffff }, obstacle,
   build(ctx) {
+    ctx.mist(14, ctx.R + 20, ctx.R + 120, 1, 14, 110, 0xe8c49a, 0.36);
     const { R, noise, rnd, solid, glow } = ctx;
     const hfn = (x, z, r) => smooth(R + 3, R + 60, r) * 3 * noise.fbm(x * 0.05, z * 0.05, 2) + smooth(R + 110, R + 200, r) * (52 + 14 * noise.fbm(x * 0.012, z * 0.012, 3)) + smooth(R + 260, R + 540, r) * noise.ridge(x * 0.006, z * 0.006, 3) * 55;
     ctx.ring({ R1: 640, nr: 60, nt: 180, height: hfn, color: (x, y, z, g, r) => { const strat = 0.5 + 0.5 * Math.sin(y * 0.55 + noise.fbm(x * 0.02, z * 0.02, 2) * 6); return lerpHex(sandColor(x, y, z, g, r, ctx), lerpHex(0x9a6648, 0xc88a5c, strat), smooth(8, 40, y)); } });

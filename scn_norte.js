@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { lerpHex, smooth } from './scn_util.js';
 import { C, peak, pine, radioTower, dish, building, container, bridge, lamp, iceFall } from './scn_props.js';
-import { cliffRing, ramp, derrick, tank, banner } from './scn_props2.js';
+import { cliffRing, ramp, derrick, tank, banner, fence } from './scn_props2.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const SKY = { top: 0x2a74d0, horizon: 0xcfe3f6, sunDir: [0.55, 0.5, 0.45], sunCol: 0xfff4dc, cover: 0.5, haze: 0.28, cloudShade: 0x9fb6d6 };
@@ -71,8 +71,9 @@ function iceFalls(ctx, hfn, n, r0, r1) {
 }
 
 const montanhas = {
-  name: 'Montanhas Nevadas', sky: SKY, env: ENV, ground: { kind: 'snow', tint: 0xe9f1fb }, obstacle,
+  name: 'Montanhas Nevadas', clutter: 'snow', sky: SKY, env: ENV, ground: { kind: 'snow', tint: 0xe9f1fb }, obstacle,
   build(ctx) {
+    ctx.mist(16, ctx.R + 30, ctx.R + 260, 6, 22, 130, 0xeaf3ff, 0.42);
     const hfn = mountainHeight(ctx);
     ctx.ring({ R1: 560, nr: 56, nt: 160, height: hfn, color: (x, y, z, s, r) => snowColor(x, y, z, s, r, ctx) });
     scatterPeaks(ctx, hfn, 14, 200, 380, 110, 220);
@@ -84,8 +85,9 @@ const montanhas = {
 };
 
 const posto = {
-  name: 'Posto Avançado', sky: { ...SKY, cover: 0.38, cloudShade: 0xb4c6de }, env: ENV, ground: { kind: 'snow', tint: 0xf4f8ff }, obstacle,
+  name: 'Posto Avançado', clutter: 'snow', sky: { ...SKY, cover: 0.38, cloudShade: 0xb4c6de }, env: ENV, ground: { kind: 'snow', tint: 0xf4f8ff }, obstacle,
   build(ctx) {
+    ctx.mist(12, ctx.R + 30, ctx.R + 260, 5, 20, 120, 0xeaf3ff, 0.36);
     const { R, solid, glow, rnd, noise } = ctx, a0 = 0.5, pr = R + 105, padH = 16;
     const P = { x: Math.cos(a0) * pr, z: Math.sin(a0) * pr, r: 62, h: padH, fall: 9 }, Q = { x: Math.cos(a0 + 0.95) * (R + 135), z: Math.sin(a0 + 0.95) * (R + 135), r: 26, h: padH + 6, fall: 9 }, W = { x: Math.cos(a0 - 0.9) * (R + 125), z: Math.sin(a0 - 0.9) * (R + 125), r: 24, h: padH + 3, fall: 9 };
     const hfn = mountainHeight(ctx, { amp: 200, midAmp: 14, terrace: 0.5, pads: [P, Q, W] });
@@ -114,13 +116,22 @@ const posto = {
     ramp(solid, ...at(46, 0).slice(0, 1), padH + 1, ...at(46, 0).slice(1), Q.x - 8, Q.h + 1, Q.z - 8, 6, 0x3a3d44, C.yellow, false);
     building(solid, glow, Q.x, Q.z, 24, 18, 10, { y: Q.h, wall: 0x5d6168, trim: C.orange }); radioTower(solid, glow, Q.x + 9, Q.z, 56, Q.h);
     building(solid, glow, W.x, W.z, 18, 14, 8, { y: W.h, wall: C.concrete, trim: C.yellow }); dish(solid, W.x + 7, W.z, W.h + 8, 3.4, 1.2); radioTower(solid, glow, W.x - 7, W.z, 38, W.h);
+    // perímetro do posto ao redor da arena: cerca amarela, postes de luz, guaritas, pilhas de contêineres e torres de rádio
+    const fenceN = 40;
+    for (let i = 0; i < fenceN; i++) { const a = i / fenceN * Math.PI * 2, a1 = (i + 0.82) / fenceN * Math.PI * 2; if (Math.abs(Math.atan2(Math.sin(a - a0), Math.cos(a - a0))) < 0.14) continue; fence(solid, Math.cos(a) * (R + 3.8), Math.sin(a) * (R + 3.8), Math.cos(a1) * (R + 3.8), Math.sin(a1) * (R + 3.8), 0, 0xd8a82a, 1.5); }
+    for (let i = 0; i < 24; i++) { const a = i / 24 * Math.PI * 2 + 0.07; lamp(solid, glow, Math.cos(a) * (R + 7), Math.sin(a) * (R + 7), 7, 0, 0xffe3a0); }
+    for (let i = 0; i < 7; i++) { const a = i / 7 * Math.PI * 2 + 0.3, x = Math.cos(a) * (R + 12), z = Math.sin(a) * (R + 12); solid.box(4.5, 8, 4.5, C.steel, { x, y: 0, z }, 0.8, 0.8); building(solid, glow, x, z, 6.5, 6.5, 3.6, { y: 8, ry: -a, trim: C.red, wall: 0x6a6f78 }); glow.box(0.8, 0.8, 0.8, 0xff3b2a, { x, y: 13.2, z }, 1, 1, 0); }
+    for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2 + 0.9; for (let k = 0; k < 3; k++) { const r = R + 15 + k * 4.2, x = Math.cos(a + k * 0.03) * r, z = Math.sin(a + k * 0.03) * r; container(solid, x, z, [C.rust, C.orange, 0x2f5d3a, C.red, 0x3a4a6a][(i + k) % 5], -a + Math.PI / 2, 0); if (k === 1) container(solid, x, z, [C.orange, C.rust][i % 2], -a + Math.PI / 2 + 0.1, 0, 6, 2.6, 2.4); } }
+    for (let i = 0; i < 3; i++) { const a = i / 3 * Math.PI * 2 + 2.2, r = R + 40, x = Math.cos(a) * r, z = Math.sin(a) * r; radioTower(solid, glow, x, z, 46 + i * 12, hfn(x, z, r)); }
+    for (let i = 0; i < 10; i++) { const a = i / 10 * Math.PI * 2 + 0.5, x = Math.cos(a) * (R + 9), z = Math.sin(a) * (R + 9); banner(solid, x, z, 9, 3.2, 0xb52a22, 0, a + 1.57); }
     return {};
   },
 };
 
 const vale = {
-  name: 'Vale Congelado', sky: { ...SKY, top: 0x3a82d6, cover: 0.4, haze: 0.5 }, env: { ...ENV, fogColor: 0xa9c8e2, near: 210, far: 780 }, ground: { kind: 'ice', tint: 0xe8f6ff }, obstacle,
+  name: 'Vale Congelado', clutter: 'ice', sky: { ...SKY, top: 0x3a82d6, cover: 0.4, haze: 0.5 }, env: { ...ENV, fogColor: 0xa9c8e2, near: 210, far: 780 }, ground: { kind: 'ice', tint: 0xe8f6ff }, obstacle,
   build(ctx) {
+    ctx.mist(18, ctx.R + 20, ctx.R + 110, -6, 8, 110, 0xdff2ff, 0.46);
     const { R, noise, solid, rnd } = ctx, LAKE = -8, rim = mountainHeight(ctx, { amp: 230 });
     const hfn = (x, z, r) => {
       const drop = smooth(R + 3, R + 12, r), plate = noise.fbm(x * 0.012 + 2, z * 0.012, 3) * 2.4, up = smooth(R + 150, R + 330, r);

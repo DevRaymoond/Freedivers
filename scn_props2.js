@@ -61,10 +61,10 @@ export function ruinTower(kit, x, z, w, h, col, y = 0, moss = 0x4a6a30) {
 }
 // árvore de selva gigante: tronco com raízes, copa de blobs e cipós
 export function jungleTree(kit, x, z, h, y = 0, leaf = 0x2f6a2a, trunk = 0x5a4430) {
-  const rnd = kit.rnd; kit.cyl(h * 0.075, h * 0.05, h * 0.7, 8, trunk, { x, y, z }, 0.2);
-  for (let i = 0; i < 5; i++) { const a = i / 5 * TAU + rnd(); kit.box(h * 0.04, h * 0.22, h * 0.16, trunk, { x: x + Math.cos(a) * h * 0.05, y, z: z + Math.sin(a) * h * 0.05, ry: -a + Math.PI / 2, rz: 0.4 }, 0.3, 0.6, 0.2); }
-  for (let i = 0; i < 6; i++) { const a = rnd() * TAU, d = h * (0.1 + rnd() * 0.26); kit.rock(h * (0.2 + rnd() * 0.12), lerpHex(leaf, 0x0c2a0c, rnd() * 0.35), { x: x + Math.cos(a) * d, y: y + h * (0.66 + rnd() * 0.22), z: z + Math.sin(a) * d, sy: 0.65 }, 0, 0.2, 0.22); }
-  for (let i = 0; i < 6; i++) { const a = rnd() * TAU, d = h * (0.15 + rnd() * 0.2), len = h * (0.18 + rnd() * 0.3); kit.box(h * 0.012, len, h * 0.012, lerpHex(leaf, 0x1a4a14, 0.3), { x: x + Math.cos(a) * d, y: y + h * 0.72 - len, z: z + Math.sin(a) * d }, 1, 1, 0.2); }
+  const rnd = kit.rnd, L = kit.lod ?? 1; kit.cyl(h * 0.075, h * 0.05, h * 0.7, L < 1 ? 6 : 8, trunk, { x, y, z }, 0.2);
+  const roots = L < 1 ? 3 : 5; for (let i = 0; i < roots; i++) { const a = i / roots * TAU + rnd(); kit.box(h * 0.04, h * 0.22, h * 0.16, trunk, { x: x + Math.cos(a) * h * 0.05, y, z: z + Math.sin(a) * h * 0.05, ry: -a + Math.PI / 2, rz: 0.4 }, 0.3, 0.6, 0.2); }
+  const blobs = L < 1 ? 4 : 6; for (let i = 0; i < blobs; i++) { const a = rnd() * TAU, d = h * (0.1 + rnd() * 0.26); kit.rock(h * (0.2 + rnd() * 0.12), lerpHex(leaf, 0x0c2a0c, rnd() * 0.35), { x: x + Math.cos(a) * d, y: y + h * (0.66 + rnd() * 0.22), z: z + Math.sin(a) * d, sy: 0.65 }, 0, 0.2, 0.22); }
+  const vines = L < 1 ? 2 : 6; for (let i = 0; i < vines; i++) { const a = rnd() * TAU, d = h * (0.15 + rnd() * 0.2), len = h * (0.18 + rnd() * 0.3); kit.box(h * 0.012, len, h * 0.012, lerpHex(leaf, 0x1a4a14, 0.3), { x: x + Math.cos(a) * d, y: y + h * 0.72 - len, z: z + Math.sin(a) * d }, 1, 1, 0.2); }
 }
 export function palm(kit, x, z, h, y = 0, leaf = 0x3f8a32) {
   const rnd = kit.rnd, lean = (rnd() - 0.5) * 0.4; kit.cyl(h * 0.03, h * 0.02, h, 6, 0x6a5238, { x, y, z, rz: lean, rx: lean * 0.5 }, 0.15);
@@ -83,20 +83,21 @@ export function brazier(kit, glow, x, z, y = 0, s = 1) { kit.cyl(0.5 * s, 0.35 *
 // anel contínuo de colunas de rocha (paredões de falésia): cada coluna é uma pilha de prismas irregulares com estratos e, opcionalmente, capa de neve/musgo.
 // o = { r0, r1, hmin, hmax, wmin, wmax, cols: [escuro, claro], cap, capH, sides, noise, hfn, y0, skip(a) }
 export function cliffRing(ctx, o) {
-  const { rnd, solid, noise } = ctx, rr = o.r0, arc = (o.wmin + o.wmax) / 2 * 0.62; let a = rnd() * 0.2;
+  const { rnd, solid, noise, touch } = ctx, rr = o.r0, arc = (o.wmin + o.wmax) / 2 * (touch ? 0.95 : 0.62); let a = rnd() * 0.2;
   const n = Math.round(Math.PI * 2 * (o.r0 + o.r1) / 2 / arc);
   for (let i = 0; i < n; i++) {
     a = i / n * TAU + (rnd() - 0.5) * 0.02; if (o.skip && o.skip(a)) continue;
     const r = o.r0 + rnd() * (o.r1 - o.r0), x = Math.cos(a) * r, z = Math.sin(a) * r, w = o.wmin + rnd() * (o.wmax - o.wmin);
     const prof = noise ? noise.fbm(Math.cos(a) * 2 + 5, Math.sin(a) * 2 + 5, 3) : rnd(), h = o.hmin + (o.hmax - o.hmin) * Math.min(1, prof * 1.25 + (rnd() - 0.5) * 0.35);
     const y = (o.hfn ? o.hfn(x, z, r) : 0) + (o.y0 ?? -2);
-    const layers = Math.max(3, Math.round(h / 9)); let rad = w;
+    const layers = Math.max(touch ? 2 : 3, Math.round(h / (touch ? 14 : 9))); let rad = w;
     for (let L = 0; L < layers; L++) {
       const lh = h / layers, poly = [], sides = o.sides || 6, rrr = rad * (0.88 + rnd() * 0.26);
       for (let k = 0; k < sides; k++) { const aa = k / sides * TAU + rnd() * 0.3, j = 0.72 + rnd() * 0.5; poly.push([Math.cos(aa) * rrr * j, Math.sin(aa) * rrr * j]); }
       kit_prism(solid, poly, lh * 1.03, lerpHex(lerpHex(o.cols[0], o.cols[1], rnd() * 0.5 + (L % 2) * 0.25), 0x14161c, 0.1 + rnd() * 0.18), x, y + L * lh, z);
       rad *= 0.985;
     }
+    if (o.onColumn) o.onColumn(x, z, y, h, w, a);
     if (o.cap != null) { const poly = []; for (let k = 0; k < 7; k++) { const aa = k / 7 * TAU, j = 0.8 + rnd() * 0.35; poly.push([Math.cos(aa) * rad * j * 1.04, Math.sin(aa) * rad * j * 1.04]); } kit_prism(solid, poly, o.capH ?? 2.2, lerpHex(o.cap, 0xffffff, rnd() * 0.3), x, y + h - 0.3, z, 0.9); }
   }
 }
@@ -109,4 +110,61 @@ export function ramp(kit, x0, y0, z0, x1, y1, z1, w = 6, col = 0x3a3d44, rail = 
   kit.box(w, 0.9, len, col, { x: mx, y: my - 0.45, z: mz, q }, 1, 1, 0.1);
   for (const s of [-1, 1]) kit.box(0.22, 1.1, len, rail, { x: mx + side.x * s, y: my + 0.45, z: mz + side.z * s, q }, 1, 1, 0.1);
   if (legs) { const n = Math.max(2, Math.round(len / 9)); for (let i = 0; i <= n; i++) { const f = i / n, x = x0 + dx * f, y = y0 + dy * f, z = z0 + dz * f; kit.box(1.0, Math.max(1, y + 12), 1.0, 0x575b64, { x, y: -12, z }, 0.8, 0.8, 0.1); } }
+}
+
+// ───────────── vilarejo e campo ─────────────
+export function hay(kit, x, z, y = 0, ry = 0, s = 1) { kit.cyl(0.9 * s, 0.9 * s, 1.6 * s, 9, 0xd9b84a, { x, y: y + 0.9 * s, z, rz: Math.PI / 2, ry }, 0.2); }
+export function tent(kit, x, z, w, h, col = 0xd8cfae, y = 0, ry = 0) { kit.prism([[-w / 2, -w * 0.6], [w / 2, -w * 0.6], [w / 2, w * 0.6], [-w / 2, w * 0.6]], h, col, { x, y, z, ry }, 0.02, 0.12); }
+export function stall(kit, x, z, col = 0xb52a22, y = 0, ry = 0) { kit.box(3.2, 1.0, 1.4, 0x6a4a2c, { x, y, z, ry }); kit.prism([[-1.9, -1.2], [1.9, -1.2], [1.9, 1.2], [-1.9, 1.2]], 0.9, col, { x, y: y + 2.3, z, ry }, 0.7, 0.12); for (const s of [-1, 1]) { const c = Math.cos(ry), sn = Math.sin(ry); kit.box(0.15, 2.3, 0.15, 0x4a3420, { x: x + s * 1.7 * c, y, z: z - s * 1.7 * sn }); } }
+export function watchtowerWood(kit, glow, x, z, h, y = 0, ry = 0) {
+  for (const [sx, sz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) kit.strut(x + sx * 2.6, y, z + sz * 2.6, x + sx * 1.9, y + h, z + sz * 1.9, 0.38, 0x5a3f28);
+  for (let k = 1; k <= 3; k++) { const f = k / 4, w = 2.6 * (1 - f * 0.28); for (const [a, b, c, d] of [[-1, -1, 1, -1], [1, -1, 1, 1], [1, 1, -1, 1], [-1, 1, -1, -1]]) kit.strut(x + a * w, y + f * h, z + b * w, x + c * w, y + f * h, z + d * w, 0.2, 0x4a3420); }
+  kit.box(5.4, 0.3, 5.4, 0x6a4a2c, { x, y: y + h, z, ry }); kit.box(4.4, 2.2, 4.4, 0x7a5a36, { x, y: y + h + 0.3, z, ry }, 1, 1, 0.14); kit.prism([[-3.1, -3.1], [3.1, -3.1], [3.1, 3.1], [-3.1, 3.1]], 1.8, 0x4a3828, { x, y: y + h + 2.5, z, ry }, 0.1, 0.14);
+  glow.box(0.9, 0.9, 0.12, 0xffc46a, { x: x + Math.sin(ry) * 2.25, y: y + h + 1.1, z: z + Math.cos(ry) * 2.25, ry }, 1, 1, 0);
+}
+export function well(kit, x, z, y = 0) { kit.cyl(1.0, 1.0, 1.0, 8, 0x8a8678, { x, y, z }, 0.18); for (const s of [-1, 1]) kit.box(0.15, 2.2, 0.15, 0x5a3f28, { x: x + s, y, z }); kit.prism([[-1.3, -0.9], [1.3, -0.9], [1.3, 0.9], [-1.3, 0.9]], 0.7, 0x5a4030, { x, y: y + 2.2, z }, 0.2, 0.14); }
+export function barn(kit, glow, x, z, y = 0, ry = 0) { kit.box(14, 6, 10, 0x9a3a2a, { x, y, z, ry }, 1, 1, 0.14); kit.prism([[-7.5, -5.5], [7.5, -5.5], [7.5, 5.5], [-7.5, 5.5]], 4.2, 0x4a3a30, { x, y: y + 6, z, ry }, 0.04, 0.12); kit.box(4, 4.2, 0.2, 0xe8e0d0, { x: x + Math.sin(ry) * 5.05, y, z: z + Math.cos(ry) * 5.05, ry }); }
+// fileira de árvores e arbustos ao redor (copa baixa)
+export function bush(kit, x, z, s, y = 0, col = 0x4a7a2a) { kit.rock(s, lerpHex(col, 0x1f4a14, kit.rnd() * 0.5), { x, y: y + s * 0.4, z, sy: 0.7 }, 0, 0.2, 0.25); }
+
+// ───────────── detalhes do chão da arena (sem colisão): quebram o plano liso ─────────────
+export function scatterClutter(ctx, kind) {
+  const { R, rnd, solid, glow, touch } = ctx, k = touch ? 0.45 : 1;
+  const inside = (n, fn) => { for (let i = 0; i < n * k; i++) { const a = rnd() * TAU, r = Math.sqrt(rnd()) * (R - 3); fn(Math.cos(a) * r, Math.sin(a) * r, a, i); } };
+  if (kind === 'snow') {
+    inside(110, (x, z) => solid.rock(0.5 + rnd() * 1.1, lerpHex(0xf3f7fc, 0xc9d9ec, rnd() * 0.5), { x, y: 0, z, sy: 0.3 }, 0, 0.06, 0.18));
+    inside(40, (x, z) => solid.rock(0.2 + rnd() * 0.4, 0x4a505e, { x, y: 0.05, z, sy: 0.7 }, 0, 0.2));
+    inside(26, (x, z, a) => solid.cyl(0.18, 0.01, 0.9 + rnd() * 0.8, 4, lerpHex(0xa9e3f2, 0x5fb7d8, rnd()), { x, y: 0, z, rx: (rnd() - 0.5) * 0.4 }, 0.2));
+    inside(30, (x, z) => { solid.cyl(0.05, 0.05, 0.9, 4, 0x5a3f28, { x, y: 0, z }); solid.box(0.5, 0.18, 0.04, 0xc8d0dc, { x, y: 0.7, z }); });   // marcas de neve (estacas)
+  } else if (kind === 'ice') {
+    inside(90, (x, z) => solid.rock(0.4 + rnd() * 0.9, lerpHex(0xe6f8fd, 0x9fdcf0, rnd()), { x, y: 0, z, sy: 0.3 }, 0, 0.06, 0.2));
+    inside(34, (x, z) => solid.cyl(0.2, 0.01, 1.0 + rnd() * 1.2, 4, lerpHex(0xa9e3f2, 0x5fb7d8, rnd()), { x, y: 0, z, rx: (rnd() - 0.5) * 0.4 }, 0.2));
+    inside(30, (x, z) => solid.rock(0.2 + rnd() * 0.4, 0x3a4252, { x, y: 0.05, z, sy: 0.7 }, 0, 0.2));
+  } else if (kind === 'jungle') {
+    inside(120, (x, z, a) => fern(solid, x, z, 0.9 + rnd() * 0.9, 0, lerpHex(0x3f8a32, 0x7ab040, rnd())));
+    inside(60, (x, z) => solid.rock(0.25 + rnd() * 0.5, lerpHex(0x6a6a58, 0x3f6a2a, rnd()), { x, y: 0, z, sy: 0.6 }, 0, 0.2));
+    inside(26, (x, z) => solid.cyl(0.12, 0.1, 1.8 + rnd() * 1.8, 5, 0x5a4430, { x, y: 0.1, z, rz: Math.PI / 2, ry: rnd() * 3 }, 0.2));
+    inside(40, (x, z) => solid.cyl(0.08, 0.04, 0.3, 5, [0xd8392f, 0xf0c030, 0xe86a2a][(rnd() * 3) | 0], { x, y: 0.4, z }, 0.1));
+  } else if (kind === 'swamp') {
+    inside(40, (x, z) => solid.cyl(1.0 + rnd() * 1.6, 1.0, 0.05, 9, 0x2f5a5a, { x, y: 0.03, z }, 0.15));     // poças
+    inside(120, (x, z) => { for (let q = 0; q < 3; q++) solid.cyl(0.06, 0.01, 1.4 + rnd() * 1.2, 4, 0x6a8a3a, { x: x + (rnd() - 0.5), y: 0, z: z + (rnd() - 0.5) }, 0.2); });
+    inside(40, (x, z) => solid.rock(0.25 + rnd() * 0.5, lerpHex(0x4a4a38, 0x3f5a2a, rnd()), { x, y: 0, z, sy: 0.6 }, 0, 0.2));
+  } else if (kind === 'ruins') {
+    inside(46, (x, z) => solid.box(0.8 + rnd() * 1.4, 0.3 + rnd() * 0.7, 0.8 + rnd() * 1.4, lerpHex(0x8b8978, 0x5f5d52, rnd()), { x, y: 0, z, ry: rnd() * 3 }, 0.9, 0.9, 0.2));
+    inside(70, (x, z) => fern(solid, x, z, 0.8 + rnd() * 0.8, 0, lerpHex(0x3f8a32, 0x7ab040, rnd())));
+    inside(24, (x, z) => solid.cyl(0.5 + rnd() * 0.3, 0.45, 0.5 + rnd() * 1.6, 7, lerpHex(0x8b8978, 0x5f5d52, rnd()), { x, y: 0, z }, 0.2));
+  } else if (kind === 'sand') {
+    inside(90, (x, z) => solid.rock(0.3 + rnd() * 0.9, lerpHex(0xa8482c, 0x5e281a, rnd()), { x, y: 0, z, sy: 0.6 }, 0, 0.22));
+    inside(60, (x, z) => solid.box(2 + rnd() * 5, 0.06, 0.25, 0xf0b070, { x, y: 0.02, z, ry: 0.4 + rnd() * 0.3 }, 1, 1, 0.1));          // marcas de vento
+    inside(34, (x, z) => solid.box(0.2 + rnd() * 0.8, 0.1 + rnd() * 0.5, 0.2 + rnd() * 0.8, 0x4a423c, { x, y: 0, z, ry: rnd() * 3, rz: (rnd() - 0.5) * 0.8 }, 1, 1, 0.2));
+    inside(14, (x, z) => solid.cyl(0.4, 0.4, 0.14, 8, 0x6a5a4a, { x, y: 0, z }, 0.2));
+  } else if (kind === 'basalt') {
+    inside(90, (x, z) => solid.rock(0.25 + rnd() * 0.7, lerpHex(0x2a201e, 0x5a4238, rnd()), { x, y: 0, z, sy: 0.6 }, 0, 0.26));
+    inside(60, (x, z) => glow.box(0.12 + rnd() * 0.3, 0.05, 1.0 + rnd() * 2.2, rnd() < 0.5 ? 0xff7a1e : 0xe2480f, { x, y: 0.03, z, ry: rnd() * 3 }, 1, 1, 0.2));   // veios de lava no chão
+    inside(26, (x, z) => glow.rock && glow.rock(0.2, 0xff8a2a, { x, y: 0.1, z }, 0, 0.1));
+  } else if (kind === 'grass') {
+    inside(260, (x, z) => { for (let q = 0; q < 3; q++) solid.cyl(0.12, 0.01, 0.8 + rnd() * 0.8, 3, lerpHex(0x7a9a38, 0xd8c050, rnd()), { x: x + (rnd() - 0.5), y: 0, z: z + (rnd() - 0.5) }, 0.2, false); });
+    inside(90, (x, z) => solid.cyl(0.07, 0.03, 0.5, 4, [0xf6f2e0, 0xf0c030, 0xd8483a, 0x8a6ad8][(rnd() * 4) | 0], { x, y: 0.6, z }, 0.1));
+    inside(40, (x, z) => solid.rock(0.25 + rnd() * 0.6, lerpHex(0x7a766a, 0x4a4840, rnd()), { x, y: 0, z, sy: 0.6 }, 0, 0.22));
+  }
 }
